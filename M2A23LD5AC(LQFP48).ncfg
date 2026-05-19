@@ -1,0 +1,114 @@
+/****************************************************************************
+ * @file     M2A23LD5AC(LQFP48).ncfg
+ * @version  v1.36.1
+ * @Date     Wed May 13 2026 16:25:10 GMT+0800 (台北標準時間)
+ * @brief    NuMicro config file
+ *
+ * @note Please do not modify this file.
+ *       Otherwise, it may not be loaded successfully.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Copyright (C) 2013-2026 Nuvoton Technology Corp. All rights reserved.
+*****************************************************************************/
+MCU:M2A23LD5AC(LQFP48)
+Pin1:INT0
+Pin2:INT1
+Pin3:PWM0_CH2
+Pin4:ADC0_CH2
+Pin5:PWM0_CH4
+Pin6:ADC0_CH0
+Pin7:PA.11
+Pin8:PA.10
+Pin9:PA.9
+Pin10:PA.8
+Pin11:PWM0_CH0
+Pin12:PF.4
+Pin13:XT1_IN
+Pin14:XT1_OUT
+Pin15:UART0_TXD
+Pin16:UART0_RXD
+Pin17:PA.5
+Pin18:PA.4
+Pin19:PA.3
+Pin20:PA.2
+Pin21:PA.1
+Pin22:PA.0
+Pin23:PF.15
+Pin24:nRESET
+Pin25:ICE_DAT
+Pin26:ICE_CLK
+Pin27:CANFD0_TXD
+Pin28:CANFD0_RXD
+Pin29:PC.3
+Pin30:PC.2
+Pin31:PC.1
+Pin32:PC.0
+Pin33:PA.12
+Pin34:PA.13
+Pin35:PA.14
+Pin36:PA.15
+Pin37:VSS
+Pin38:LDO_CAP
+Pin39:VDD
+Pin40:PC.14
+Pin41:PB.15
+Pin42:PB.14
+Pin43:PB.13
+Pin44:PB.12
+Pin45:AVDD
+Pin46:AVSS
+Pin47:UART1_TXD
+Pin48:UART1_RXD
+GPIOpin:41
+GPIOpin:21
+GPIOpin:19
+GPIOpin:17
+GPIOpin:35
+GPIOpin:34
+GPIOpin:33
+GPIOpin:32
+GPIOpin:31
+GPIOpin:30
+GPIOpin:20
+GPIOpin:18
+GPIOpin:16
+UserDefined:INT0=>IN1_SET
+UserDefined:INT1=>IN2_SET
+UserDefined:ADC0_CH0=>ADC_B0
+UserDefined:ADC0_CH2=>ADC_B1
+UserDefined:PWM0_CH0=>PWM_SET1
+UserDefined:PWM0_CH2=>PWM_SET2
+UserDefined:PWM0_CH4=>PWM_SET3
+UserDefined:PB.13=>EVB_TX
+UserDefined:PB.12=>EVB_RX
+UserDefined:PB.14=>EN
+UserDefined:UART1_TXD=>DBG_TX
+UserDefined:UART1_RXD=>DBG_RX
+UserDefined:UART0_TXD=>LIN_TX
+UserDefined:UART0_RXD=>LIN_RX
+UserDefined:PA.0=>LED_SET1
+UserDefined:PA.2=>LED_SET3
+UserDefined:PA.4=>LED_SET5
+UserDefined:PF.15=>LED_SET4
+UserDefined:PC.3=>LED_SET5
+UserDefined:PC.2=>LED_SET6
+UserDefined:PA.15=>SW_1
+UserDefined:PA.14=>SW_2
+UserDefined:PA.13=>SW_3
+UserDefined:PA.12=>SW_4
+UserDefined:PC.0=>SW_5
+UserDefined:PC.1=>SW_6
+UserDefined:PA.1=>LED_SET2
+UserDefined:PA.3=>LED_SET4
+UserDefined:PA.5=>LED_SET6
+SYS->GPA_MFPH = 0x00000000
+SYS->GPA_MFPL = 0x22000000
+SYS->GPB_MFPH = 0x00000000
+SYS->GPB_MFPL = 0x33FFB1B1
+SYS->GPC_MFPH = 0x00000000
+SYS->GPC_MFPL = 0x00990000
+SYS->GPF_MFPH = 0x00000000
+SYS->GPF_MFPL = 0x00B033EE
+LockedPins=[]
+/*** (C) COPYRIGHT 2013-2026 Nuvoton Technology Corp. ***/
