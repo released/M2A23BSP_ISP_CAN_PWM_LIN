@@ -171,24 +171,6 @@ void DRV_GPIO_IO_ToggleLed(E_DRV_GPIO_LED eLed)
     GPIO_PIN_DATA(psPin->u8PortIndex, psPin->u8Pin) = (u32Current == 0U) ? 1U : 0U;
 }
 
-uint32_t DRV_GPIO_IO_GetButtonMask(void)
-{
-    uint32_t u32Mask;
-    uint32_t i;
-
-    u32Mask = 0U;
-
-    for (i = 0U; i < 6U; i++)
-    {
-        if (DRV_GPIO_IO_ReadPin(&g_asButtonPin[i]) != 0U)
-        {
-            u32Mask |= (1UL << i);
-        }
-    }
-
-    return u32Mask;
-}
-
 uint32_t DRV_GPIO_IO_GetAndClearButtonEventFlags(void)
 {
     uint32_t u32Flags;

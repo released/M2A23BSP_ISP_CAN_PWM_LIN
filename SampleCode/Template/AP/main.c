@@ -166,7 +166,32 @@ static void APP_ProcessButtonEvents(void)
         return;
     }
 
-    u32ButtonMask = DRV_GPIO_IO_GetButtonMask();
+    u32ButtonMask = 0U;
+    if (SW_1 != 0U)
+    {
+        u32ButtonMask |= (1UL << 0);
+    }
+    if (SW_2 != 0U)
+    {
+        u32ButtonMask |= (1UL << 1);
+    }
+    if (SW_3 != 0U)
+    {
+        u32ButtonMask |= (1UL << 2);
+    }
+    if (SW_4 != 0U)
+    {
+        u32ButtonMask |= (1UL << 3);
+    }
+    if (SW_5 != 0U)
+    {
+        u32ButtonMask |= (1UL << 4);
+    }
+    if (SW_6 != 0U)
+    {
+        u32ButtonMask |= (1UL << 5);
+    }
+
     for (i = 0U; i < 6U; i++)
     {
         if ((u32ButtonEvents & (1UL << i)) != 0U)
@@ -662,7 +687,7 @@ void SYS_Init(void)
     CLK_SetModuleClock(PWM0_MODULE, CLK_CLKSEL3_PWM0SEL_PCLK0, 0);
 
     CLK_EnableModuleClock(ADC0_MODULE);
-    CLK_SetModuleClock(ADC0_MODULE, CLK_CLKSEL3_ADC0SEL_HCLK, CLK_CLKDIV0_ADC0(2));
+    CLK_SetModuleClock(ADC0_MODULE, CLK_CLKSEL3_ADC0SEL_HCLK, CLK_CLKDIV0_ADC0(32));
 
     CLK_SetModuleClock(CANFD0_MODULE, CLK_CLKSEL0_CANFD0SEL_PLL_DIV2, CLK_CLKDIV1_CANFD0(1));
     CLK_EnableModuleClock(CANFD0_MODULE);
