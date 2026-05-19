@@ -17,6 +17,12 @@ typedef enum
     eDRV_GPIO_LED_MAX
 } E_DRV_GPIO_LED;
 
+#define LED_SET1                                        (PA0)
+#define LED_SET2                                        (PA1)
+#define LED_SET3                                        (PA2)
+#define LED_SET4                                        (PA3)
+#define LED_SET5                                        (PA4)
+#define LED_SET6                                        (PA5)
 #define DRV_GPIO_BUTTON1_EVENT                          (1UL << 0)
 #define DRV_GPIO_BUTTON2_EVENT                          (1UL << 1)
 #define DRV_GPIO_BUTTON3_EVENT                          (1UL << 2)
