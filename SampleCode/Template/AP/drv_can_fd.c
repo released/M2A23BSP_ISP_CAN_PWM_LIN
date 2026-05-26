@@ -10,17 +10,52 @@
 
 CANFD_FD_MSG_T g_sRxMsgFrame;
 CANFD_FD_MSG_T g_sTxMsgFrame;
+uint8_t g_au8CanRxDataBC[32] = {0};
+volatile uint8_t g_u8CanRxDataBCUpdated = 0U;
 
 volatile uint32_t g_u32CanIrqStatus = 0;
 static uint8_t g_u8CanFdModeOpened = 0;
 uint8_t msg_tx_buffer_idx = 0;
-
-uint8_t num_cnt = 0;
 /*_____ M A C R O S ________________________________________________________*/
 #define CANFD_RX_INT_MASK    (CANFD_IR_RF0N_Msk | CANFD_IR_RF0L_Msk | CANFD_IR_RF1N_Msk | CANFD_IR_RF1L_Msk)
 #define CANFD_TX_RETRY_MAX   (10U)
+#define CANFD_TX_DATA_MAX_LEN (64U)
 
 /*_____ F U N C T I O N S __________________________________________________*/
+
+static void CAN_ParseRxMessage(CANFD_FD_MSG_T *psRxMsg)
+{
+    if (psRxMsg->eIdType != eCANFD_SID)
+    {
+        return;
+    }
+
+    switch (psRxMsg->u32Id)
+    {
+        case 0xBCU:
+            if (psRxMsg->u32DLC < 8U)
+            {
+                printf("SID 0xBC received, but DLC=%u is shorter than 8 bytes\r\n", psRxMsg->u32DLC);
+                return;
+            }
+
+            g_au8CanRxDataBC[0] = psRxMsg->au8Data[0];
+            g_au8CanRxDataBC[1] = psRxMsg->au8Data[1];
+            g_au8CanRxDataBC[2] = psRxMsg->au8Data[2];
+            g_au8CanRxDataBC[3] = psRxMsg->au8Data[3];
+            g_au8CanRxDataBC[4] = psRxMsg->au8Data[4];
+            g_au8CanRxDataBC[5] = psRxMsg->au8Data[5];
+            g_au8CanRxDataBC[6] = psRxMsg->au8Data[6];
+            g_au8CanRxDataBC[7] = psRxMsg->au8Data[7];
+
+            g_u8CanRxDataBCUpdated = 1U;
+            printf("SID 0xBC parsed into g_au8CanRxDataBC[0..7]\r\n");
+            break;
+
+        default:
+            break;
+    }
+}
 
 static void CAN_DumpBusStatus(void)
 {
@@ -177,6 +212,7 @@ void CAN_Rx_process(void)
             if (u32RxResult != eCANFD_RECEIVE_EMPTY)
             {
                 CAN_PrintRxMessage(0, &g_sRxMsgFrame);
+                CAN_ParseRxMessage(&g_sRxMsgFrame);
             }
         }
         while ((u32RxResult != eCANFD_RECEIVE_EMPTY) && (CAN_RxFifo0FillLevel() != 0U));
@@ -195,6 +231,7 @@ void CAN_Rx_process(void)
             if (u32RxResult != eCANFD_RECEIVE_EMPTY)
             {
                 CAN_PrintRxMessage(1, &g_sRxMsgFrame);
+                CAN_ParseRxMessage(&g_sRxMsgFrame);
             }
         }
         while ((u32RxResult != eCANFD_RECEIVE_EMPTY) && (CAN_RxFifo1FillLevel() != 0U));
@@ -205,7 +242,6 @@ void CAN_Rx_process(void)
 
 void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE eIdType, uint32_t u32Id, uint8_t u8Len)
 {
-    uint8_t u8Cnt;
     uint8_t u8Retry;
 
     if ((en_can_fd != 0U) && (g_u8CanFdModeOpened == 0U))
@@ -225,13 +261,12 @@ void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE
     {
         u8Len = 8U;
     }
+    else if (u8Len > CANFD_TX_DATA_MAX_LEN)
+    {
+        u8Len = CANFD_TX_DATA_MAX_LEN;
+    }
 
     psTxMsg->u32DLC = u8Len;
-
-    for (u8Cnt = 0; u8Cnt < psTxMsg->u32DLC; u8Cnt++)
-    {
-        psTxMsg->au8Data[u8Cnt] = u8Cnt + num_cnt;
-    } 
 
     #if 1
     /* use message buffer 0 */
@@ -250,7 +285,6 @@ void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE
     {
         if (CANFD_TransmitTxMsg(CANFD0, msg_tx_buffer_idx, psTxMsg) == eCANFD_TRANSMIT_SUCCESS)
         {
-            num_cnt += 0x10U;
             #if 1
             printf("tx request queued\r\n");
             #endif

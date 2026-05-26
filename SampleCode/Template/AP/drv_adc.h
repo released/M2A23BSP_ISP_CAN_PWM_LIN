@@ -17,5 +17,8 @@ typedef enum
 void DRV_ADC_Init(void);
 void DRV_ADC_SampleAll(void);
 uint16_t DRV_ADC_GetSample(E_DRV_ADC_CHANNEL eChannel);
+void DRV_ADC_UpdateAvdd(void);
+uint32_t DRV_ADC_GetAvddMv(void);
+uint32_t DRV_ADC_GetSampleMilliVolt(E_DRV_ADC_CHANNEL eChannel);
 
 #endif /* __DRV_ADC_H__ */

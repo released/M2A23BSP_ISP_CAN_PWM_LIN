@@ -17,20 +17,19 @@ typedef enum
     eDRV_GPIO_LED_MAX
 } E_DRV_GPIO_LED;
 
+typedef enum
+{
+    eDRV_GPIO_INPUT_MEASURE1 = 0,
+    eDRV_GPIO_INPUT_MEASURE2,
+    eDRV_GPIO_INPUT_MEASURE_MAX
+} E_DRV_GPIO_INPUT_MEASURE;
+
 #define LED_SET1                                        (PA0)
 #define LED_SET2                                        (PA1)
 #define LED_SET3                                        (PA2)
 #define LED_SET4                                        (PA3)
 #define LED_SET5                                        (PA4)
 #define LED_SET6                                        (PA5)
-#define DRV_GPIO_BUTTON1_EVENT                          (1UL << 0)
-#define DRV_GPIO_BUTTON2_EVENT                          (1UL << 1)
-#define DRV_GPIO_BUTTON3_EVENT                          (1UL << 2)
-#define DRV_GPIO_BUTTON4_EVENT                          (1UL << 3)
-#define DRV_GPIO_BUTTON5_EVENT                          (1UL << 4)
-#define DRV_GPIO_BUTTON6_EVENT                          (1UL << 5)
-#define DRV_GPIO_INPUT1_EVENT                           (1UL << 0)
-#define DRV_GPIO_INPUT2_EVENT                           (1UL << 1)
 #define SW_1                                            (PA15)
 #define SW_2                                            (PA14)
 #define SW_3                                            (PA13)
@@ -40,10 +39,9 @@ typedef enum
 
 /*_____ F U N C T I O N S __________________________________________________*/
 void DRV_GPIO_IO_Init(void);
+void GPIO_IN_OUT_proccess(void);
 void DRV_GPIO_IO_SetLed(E_DRV_GPIO_LED eLed, uint8_t u8On);
 void DRV_GPIO_IO_ToggleLed(E_DRV_GPIO_LED eLed);
-uint32_t DRV_GPIO_IO_GetAndClearButtonEventFlags(void);
-uint32_t DRV_GPIO_IO_GetInputMask(void);
-uint32_t DRV_GPIO_IO_GetAndClearInputEventFlags(void);
+uint8_t DRV_GPIO_IO_GetAndClearInputMeasure(E_DRV_GPIO_INPUT_MEASURE eInput, uint16_t *pu16FreqHz, uint8_t *pu8Duty);
 
 #endif /* __DRV_GPIO_IO_H__ */

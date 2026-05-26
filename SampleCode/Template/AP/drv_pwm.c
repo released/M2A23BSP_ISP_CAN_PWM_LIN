@@ -7,10 +7,16 @@
 /*_____ D E F I N I T I O N S ______________________________________________*/
 #define DRV_PWM_DUTY_MAX                                (100U)
 #define DRV_PWM_DUTY_RESOLUTION                         (100U)
+#define DRV_PWM_GROUP1_CHANNEL                          (0U)
+#define DRV_PWM_GROUP2_CHANNEL                          (2U)
+#define DRV_PWM_GROUP3_CHANNEL                          (4U)
+#define DRV_PWM_GROUP1_FREQ_HZ                          (100UL)
+#define DRV_PWM_GROUP2_FREQ_HZ                          (200UL)
+#define DRV_PWM_GROUP3_FREQ_HZ                          (400UL)
 
-static const uint8_t g_au8PwmChannel[DRV_PWM_GROUP_NUM] = {0U, 2U, 4U};
-static const uint32_t g_au32PwmFreq[DRV_PWM_GROUP_NUM] = {10000UL, 1000UL, 100UL};
-static uint8_t g_au8PwmDuty[DRV_PWM_GROUP_NUM] = {50U, 50U, 50U};
+static uint8_t g_u8PwmDutyGroup1 = 0U;
+static uint8_t g_u8PwmDutyGroup2 = 0U;
+static uint8_t g_u8PwmDutyGroup3 = 0U;
 
 /*_____ F U N C T I O N S __________________________________________________*/
 static uint32_t DRV_PWM_EnterCritical(void)
@@ -88,33 +94,49 @@ static void DRV_PWM_ChannelUnmask(PWM_T *pwm, uint32_t u32ChannelNum)
 
 static void DRV_PWM_PrintStatus(void)
 {
-    uint8_t i;
-
-    for (i = 0U; i < DRV_PWM_GROUP_NUM; i++)
-    {
-        printf("PWM%u(ch%u): %lu Hz, %u %%\r\n",
-               i + 1U,
-               g_au8PwmChannel[i],
-               (unsigned long)g_au32PwmFreq[i],
-               g_au8PwmDuty[i]);
-    }
+    printf("PWM1(ch%u): %lu Hz, %u %%\r\n",
+           DRV_PWM_GROUP1_CHANNEL,
+           (unsigned long)DRV_PWM_GROUP1_FREQ_HZ,
+           g_u8PwmDutyGroup1);
+    printf("PWM2(ch%u): %lu Hz, %u %%\r\n",
+           DRV_PWM_GROUP2_CHANNEL,
+           (unsigned long)DRV_PWM_GROUP2_FREQ_HZ,
+           g_u8PwmDutyGroup2);
+    printf("PWM3(ch%u): %lu Hz, %u %%\r\n",
+           DRV_PWM_GROUP3_CHANNEL,
+           (unsigned long)DRV_PWM_GROUP3_FREQ_HZ,
+           g_u8PwmDutyGroup3);
 }
 
 void DRV_PWM_SetOutputDutyCycle(E_DRV_PWM_GROUP eGroup, uint8_t u8Duty)
 {
     uint32_t u32NewCmr;
-    uint8_t u8Group;
     uint8_t u8Channel;
+    uint8_t *pu8Duty;
 
-    u8Group = (uint8_t)eGroup;
-    if (u8Group >= DRV_PWM_GROUP_NUM)
+    switch (eGroup)
     {
-        return;
+        case eDRV_PWM_GROUP_1:
+            u8Channel = DRV_PWM_GROUP1_CHANNEL;
+            pu8Duty = &g_u8PwmDutyGroup1;
+            break;
+
+        case eDRV_PWM_GROUP_2:
+            u8Channel = DRV_PWM_GROUP2_CHANNEL;
+            pu8Duty = &g_u8PwmDutyGroup2;
+            break;
+
+        case eDRV_PWM_GROUP_3:
+            u8Channel = DRV_PWM_GROUP3_CHANNEL;
+            pu8Duty = &g_u8PwmDutyGroup3;
+            break;
+
+        default:
+            return;
     }
 
     u8Duty = DRV_PWM_ClampDuty(u8Duty);
-    u8Channel = g_au8PwmChannel[u8Group];
-    g_au8PwmDuty[u8Group] = u8Duty;
+    *pu8Duty = u8Duty;
 
     if (u8Duty == 0U)
     {
@@ -133,31 +155,29 @@ void DRV_PWM_SetOutputDutyCycle(E_DRV_PWM_GROUP eGroup, uint8_t u8Duty)
 
 /* Example:
  * DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_1, 60U);
- * DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_2, 0U);
+ * DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_2, 30U);
+ * DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_3, 30U);
  */
 void DRV_PWM_Init(void)
 {
-    uint8_t i;
     uint32_t u32Mask;
 
-    u32Mask = 0U;
+    g_u8PwmDutyGroup1 = 0U;
+    g_u8PwmDutyGroup2 = 0U;
+    g_u8PwmDutyGroup3 = 0U;
 
-    for (i = 0U; i < DRV_PWM_GROUP_NUM; i++)
-    {
-        PWM_ConfigOutputChannel(PWM0,
-                                (uint32_t)g_au8PwmChannel[i],
-                                g_au32PwmFreq[i],
-                                g_au8PwmDuty[i]);
-        u32Mask |= (1UL << g_au8PwmChannel[i]);
-    }
+    PWM_ConfigOutputChannel(PWM0, DRV_PWM_GROUP1_CHANNEL, DRV_PWM_GROUP1_FREQ_HZ, 0U);
+    PWM_ConfigOutputChannel(PWM0, DRV_PWM_GROUP2_CHANNEL, DRV_PWM_GROUP2_FREQ_HZ, 0U);
+    PWM_ConfigOutputChannel(PWM0, DRV_PWM_GROUP3_CHANNEL, DRV_PWM_GROUP3_FREQ_HZ, 0U);
+
+    u32Mask = BIT0 | BIT2 | BIT4;
 
     PWM_EnableOutput(PWM0, u32Mask);
     PWM_Start(PWM0, u32Mask);
 
-    for (i = 0U; i < DRV_PWM_GROUP_NUM; i++)
-    {
-        DRV_PWM_SetOutputDutyCycle((E_DRV_PWM_GROUP)i, g_au8PwmDuty[i]);
-    }
+    DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_1, 60U);
+    DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_2, 30U);
+    DRV_PWM_SetOutputDutyCycle(eDRV_PWM_GROUP_3, 30U);
 
     DRV_PWM_PrintStatus();
 }

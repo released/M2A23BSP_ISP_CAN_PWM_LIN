@@ -21,11 +21,21 @@ volatile struct flag_32bit flag_PROJ_CTL;
 #define FLAG_PROJ_SEND_LIN                              (flag_PROJ_CTL.bit5)
 
 /*_____ D E F I N I T I O N S ______________________________________________*/
+#if 0
 #define APP_DEBUG_UART                                  UART1
 #define APP_DEBUG_UART_RST                              UART1_RST
 #define APP_DEBUG_UART_IRQn                             UART1_IRQn
+#define APP_DEBUG_UART_IRQHandler                       UART1_IRQHandler
+#else   //EVB  DEBUG
+#define APP_DEBUG_UART                                  UART0
+#define APP_DEBUG_UART_RST                              UART0_RST
+#define APP_DEBUG_UART_IRQn                             UART0_IRQn
+#define APP_DEBUG_UART_IRQHandler                       UART0_IRQHandler
+#endif
+
 #define APP_DEBUG_UART_BAUD_RATE                        (115200U)
 #define APP_DEBUG_UART_INT_MASK                         (UART_INTEN_RDAIEN_Msk | UART_INTEN_RXTOIEN_Msk)
+
 #define LIN_BUS_UART_BAUD_RATE                          (19200U)
 #define LIN_BUS_TEST_FRAME_ID                           (0x30U)
 #define LIN_BUS_TEST_FRAME_LEN                          (8U)
@@ -36,9 +46,12 @@ volatile uint32_t counter_tick = 0;
 static int g_timer_id_task1 = -1;
 static int g_timer_id_task2 = -1;
 static int g_timer_id_task3 = -1;
-static uint8_t g_u8LedDemoState = 0U;
 static const uint8_t g_au8LinTxData[LIN_BUS_TEST_FRAME_LEN] = {0x11U, 0x22U, 0x33U, 0x44U, 0x55U, 0x66U, 0x77U, 0x88U};
+static uint16_t g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
+static uint8_t g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 
+#define ENABLE_ADC_LOG                                  (1U)
+#define ENABLE_INPUT_MEASURE_LOG                        (0U)
 /*_____ F U N C T I O N S __________________________________________________*/
 void SendChar_ToUART(int ch)
 {
@@ -134,75 +147,6 @@ void delay_ms(uint16_t ms)
     }
 }
 
-static void APP_SetAllLeds(uint8_t u8On)
-{
-    uint8_t i;
-
-    for (i = 0U; i < (uint8_t)eDRV_GPIO_LED_MAX; i++)
-    {
-        DRV_GPIO_IO_SetLed((E_DRV_GPIO_LED)i, u8On);
-    }
-}
-
-static void APP_ToggleAllLeds(void)
-{
-    uint8_t i;
-
-    for (i = 0U; i < (uint8_t)eDRV_GPIO_LED_MAX; i++)
-    {
-        DRV_GPIO_IO_ToggleLed((E_DRV_GPIO_LED)i);
-    }
-}
-
-static void APP_ProcessButtonEvents(void)
-{
-    uint32_t u32ButtonEvents;
-    uint32_t u32ButtonMask;
-    uint8_t i;
-
-    u32ButtonEvents = DRV_GPIO_IO_GetAndClearButtonEventFlags();
-    if (u32ButtonEvents == 0U)
-    {
-        return;
-    }
-
-    u32ButtonMask = 0U;
-    if (SW_1 != 0U)
-    {
-        u32ButtonMask |= (1UL << 0);
-    }
-    if (SW_2 != 0U)
-    {
-        u32ButtonMask |= (1UL << 1);
-    }
-    if (SW_3 != 0U)
-    {
-        u32ButtonMask |= (1UL << 2);
-    }
-    if (SW_4 != 0U)
-    {
-        u32ButtonMask |= (1UL << 3);
-    }
-    if (SW_5 != 0U)
-    {
-        u32ButtonMask |= (1UL << 4);
-    }
-    if (SW_6 != 0U)
-    {
-        u32ButtonMask |= (1UL << 5);
-    }
-
-    for (i = 0U; i < 6U; i++)
-    {
-        if ((u32ButtonEvents & (1UL << i)) != 0U)
-        {
-            printf("SW%u event, button mask = 0x%02lX\r\n",
-                   (unsigned int)(i + 1U),
-                   (unsigned long)u32ButtonMask);
-        }
-    }
-}
-
 static void APP_ProcessLinRx(void)
 {
     S_DRV_LIN_BUS_PACKET sLinPacket;
@@ -227,32 +171,31 @@ static void APP_ProcessLinRx(void)
 
 static void APP_ProcessADCEvents(void)
 {
-    printf("ADC_B0(PB0/CH0) = %u, ADC_B1(PB2/CH2) = %u\r\n",
+    #if (ENABLE_ADC_LOG == 1)
+    printf("ADC AVDD=%lumV, B0(PB0/CH0)=%u(%lumV), B1(PB2/CH2)=%u(%lumV)\r\n",
+           (unsigned long)DRV_ADC_GetAvddMv(),
            DRV_ADC_GetSample(eDRV_ADC_B0),
-           DRV_ADC_GetSample(eDRV_ADC_B1));
+           (unsigned long)DRV_ADC_GetSampleMilliVolt(eDRV_ADC_B0),
+           DRV_ADC_GetSample(eDRV_ADC_B1),
+           (unsigned long)DRV_ADC_GetSampleMilliVolt(eDRV_ADC_B1));
+    #endif
 }
 
-static void APP_ProcessExtIntEvents(void)
+static void APP_ProcessInputMeasureEvents(void)
 {
-    uint32_t u32InputEvents;
-    uint32_t u32InputMask;
+    uint16_t u16FreqHz;
+    uint8_t u8Duty;
 
-    u32InputEvents = DRV_GPIO_IO_GetAndClearInputEventFlags();
-    if (u32InputEvents == 0U)
+    if (DRV_GPIO_IO_GetAndClearInputMeasure(eDRV_GPIO_INPUT_MEASURE1, &u16FreqHz, &u8Duty) != 0U)
     {
-        return;
+        g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE1] = u16FreqHz;
+        g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE1] = u8Duty;
     }
 
-    u32InputMask = DRV_GPIO_IO_GetInputMask();
-
-    if ((u32InputEvents & DRV_GPIO_INPUT1_EVENT) != 0U)
+    if (DRV_GPIO_IO_GetAndClearInputMeasure(eDRV_GPIO_INPUT_MEASURE2, &u16FreqHz, &u8Duty) != 0U)
     {
-        printf("IN1_SET event, input mask = 0x%02lX\r\n", (unsigned long)u32InputMask);
-    }
-
-    if ((u32InputEvents & DRV_GPIO_INPUT2_EVENT) != 0U)
-    {
-        printf("IN2_SET event, input mask = 0x%02lX\r\n", (unsigned long)u32InputMask);
+        g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE2] = u16FreqHz;
+        g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE2] = u8Duty;
     }
 }
 
@@ -262,15 +205,16 @@ void Task_1000ms_Callback(void *user_data)
 
     APP_ProcessADCEvents();
 
-    if (g_u8LedDemoState == 0U)
-    {
-        APP_SetAllLeds(0U);
-        g_u8LedDemoState = 1U;
-    }
-    else
-    {
-        APP_ToggleAllLeds();
-    }
+    #if (ENABLE_INPUT_MEASURE_LOG == 1)
+    printf("INPUT_MEASURE");
+    printf(" IN1 duty=%u%% freq=%uHz",
+           (unsigned int)g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE1],
+           (unsigned int)g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE1]);
+    printf(" IN2 duty=%u%% freq=%uHz",
+           (unsigned int)g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE2],
+           (unsigned int)g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE2]);
+    printf("\r\n");
+    #endif
 }
 
 void Task_100ms_Callback(void *user_data)
@@ -463,6 +407,16 @@ uint8_t check_reset_source(void)
     return FALSE;
 }
 
+void TIMER2_Init(void)
+{
+    TIMER_Stop(TIMER2);
+    TIMER_SET_PRESCALE_VALUE(TIMER2, 47U);
+    TIMER_SET_OPMODE(TIMER2, TIMER_CONTINUOUS_MODE);
+    TIMER_SET_CMP_VALUE(TIMER2, 0xFFFFFFUL);
+    TIMER2->CNT = 0U;
+    TIMER_Start(TIMER2);
+}
+
 void TMR1_IRQHandler(void)
 {
     if (TIMER_GetIntFlag(TIMER1) == 1U)
@@ -503,6 +457,7 @@ static void APP_StandbyWaitCanWake(void)
     TIMER_DisableInt(TIMER1);
     TIMER_Stop(TIMER1);
     NVIC_DisableIRQ(TMR1_IRQn);
+    TIMER_Stop(TIMER2);
     UART_DisableInt(APP_DEBUG_UART, APP_DEBUG_UART_INT_MASK);
     NVIC_DisableIRQ(APP_DEBUG_UART_IRQn);
 
@@ -511,7 +466,7 @@ static void APP_StandbyWaitCanWake(void)
     g_u32CanIrqStatus = 0U;
     while (g_u32CanIrqStatus == 0U)
     {
-        __WFI();
+        CLK_Idle();
     }
 
     SysTick->CTRL = u32SysTickCtrl;
@@ -520,17 +475,35 @@ static void APP_StandbyWaitCanWake(void)
     NVIC_EnableIRQ(TMR1_IRQn);
     TIMER_EnableInt(TIMER1);
     TIMER_Start(TIMER1);
+    TIMER_Start(TIMER2);
 
     printf("Wake-up by CAN activity\r\n");
 }
 
 void loop(void)
 {
+    uint8_t u8Idx = 0;
+
     TimerService_Dispatch();
     CAN_Rx_process();
-    APP_ProcessButtonEvents();
-    APP_ProcessExtIntEvents();
+    GPIO_IN_OUT_proccess();
+    APP_ProcessInputMeasureEvents();
+    
+    #if (ENABLE_LIN_BUS == 1)
     APP_ProcessLinRx();
+    #endif
+
+    //  CAN RX
+    if (g_u8CanRxDataBCUpdated == 1U)
+    {
+        g_u8CanRxDataBCUpdated = 0U;
+        printf("g_au8CanRxDataBC[0..7] : ");
+        for (u8Idx = 0U; u8Idx < 8U; u8Idx++)
+        {
+            printf("0x%02X ", g_au8CanRxDataBC[u8Idx]);
+        }
+        printf("\r\n");
+    }
 
     if (FLAG_PROJ_ERASE_CHECKSUM)
     {
@@ -547,15 +520,32 @@ void loop(void)
     if (FLAG_PROJ_SEND_CAN_1)
     {
         FLAG_PROJ_SEND_CAN_1 = 0;
-        CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_SID, 0x333, 16);
+        g_sTxMsgFrame.au8Data[0] = 0x40U;
+        g_sTxMsgFrame.au8Data[1] = 0x20U;
+        g_sTxMsgFrame.au8Data[2] = 0x85U;
+        g_sTxMsgFrame.au8Data[3] = 0x83U;
+        g_sTxMsgFrame.au8Data[4] = 0x85U;
+        g_sTxMsgFrame.au8Data[5] = 0x59U;
+        g_sTxMsgFrame.au8Data[6] = 0x5AU;
+        g_sTxMsgFrame.au8Data[7] = 0xFFU;
+
+        CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_SID, 0x99, 8);
     }
 
     if (FLAG_PROJ_SEND_CAN_2)
     {
+        uint8_t u8Idx;
+
         FLAG_PROJ_SEND_CAN_2 = 0;
+        for (u8Idx = 0U; u8Idx < 32U; u8Idx++)
+        {
+            g_sTxMsgFrame.au8Data[u8Idx] = 0x20U + u8Idx;
+        }
+
         CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_XID, 0x4444, 32);
     }
 
+    #if (ENABLE_LIN_BUS == 1)
     if (FLAG_PROJ_SEND_LIN)
     {
         FLAG_PROJ_SEND_LIN = 0;
@@ -570,6 +560,7 @@ void loop(void)
 
         DRV_LIN_BUS_StartRx(LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
     }
+    #endif
 }
 
 void UARTx_Process(void)
@@ -623,7 +614,7 @@ void UARTx_Process(void)
     }
 }
 
-void UART1_IRQHandler(void)
+void APP_DEBUG_UART_IRQHandler(void)
 {
     if (UART_GET_INT_FLAG(APP_DEBUG_UART, UART_INTSTS_RDAINT_Msk | UART_INTSTS_RXTOINT_Msk))
     {
@@ -674,6 +665,10 @@ void SYS_Init(void)
     CLK_SetCoreClock(72000000);
     CLK_SetHCLK(CLK_CLKSEL0_HCLKSEL_HIRC, CLK_CLKDIV0_HCLK(1));
 
+    CLK->AHBCLK |= CLK_AHBCLK_GPIOACKEN_Msk | CLK_AHBCLK_GPIOBCKEN_Msk |
+                   CLK_AHBCLK_GPIOCCKEN_Msk | CLK_AHBCLK_GPIODCKEN_Msk |
+                   CLK_AHBCLK_GPIOFCKEN_Msk;
+
     CLK_EnableModuleClock(UART0_MODULE);
     CLK_SetModuleClock(UART0_MODULE, CLK_CLKSEL2_UART0SEL_HIRC, CLK_CLKDIV0_UART0(1));
 
@@ -682,6 +677,8 @@ void SYS_Init(void)
 
     CLK_EnableModuleClock(TMR1_MODULE);
     CLK_SetModuleClock(TMR1_MODULE, CLK_CLKSEL1_TMR1SEL_HIRC, 0);
+    CLK_EnableModuleClock(TMR2_MODULE);
+    CLK_SetModuleClock(TMR2_MODULE, CLK_CLKSEL1_TMR2SEL_HIRC, 0);
 
     CLK_EnableModuleClock(PWM0_MODULE);
     CLK_SetModuleClock(PWM0_MODULE, CLK_CLKSEL3_PWM0SEL_PCLK0, 0);
@@ -691,11 +688,16 @@ void SYS_Init(void)
 
     CLK_SetModuleClock(CANFD0_MODULE, CLK_CLKSEL0_CANFD0SEL_PLL_DIV2, CLK_CLKDIV1_CANFD0(1));
     CLK_EnableModuleClock(CANFD0_MODULE);
-
+    
+    #if (ENABLE_LIN_BUS == 1)   // LIN BUS & UART DEBUG
     SET_UART0_RXD_PA6();
     SET_UART0_TXD_PA7();
     SET_UART1_RXD_PB6();
     SET_UART1_TXD_PB7();
+    #else   // EVB UART DEBUG
+    SET_UART0_RXD_PB12();
+    SET_UART0_TXD_PB13();
+    #endif
     SET_ADC0_CH0_PB0();
     SET_ADC0_CH2_PB2();
     SET_PWM0_CH0_PF5();
@@ -714,11 +716,15 @@ void SYS_Init(void)
 int main(void)
 {
     SYS_Init();
+    Debug_UART_Init();
 
     DRV_GPIO_IO_Init();
+    
+    #if (ENABLE_LIN_BUS == 1)
     DRV_LIN_BUS_Init(LIN_BUS_UART_BAUD_RATE);
-    Debug_UART_Init();
+    #endif
     TIMER1_Init();
+    TIMER2_Init();
     check_reset_source();
 
     SysTick_enable(1000);
@@ -730,12 +736,13 @@ int main(void)
     CAN_Init();
     DRV_ADC_Init();
     DRV_PWM_Init();
-    APP_SetAllLeds(1U);
+    #if (ENABLE_LIN_BUS == 1)
     DRV_LIN_BUS_StartRx(LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
+    #endif
 
     printf("UART key map:\r\n");
     printf("7: standby until CAN RX wake-up\r\n");
-    printf("8: send CAN message:0x333, 16 bytes\r\n");
+    printf("8: send CAN message:0x99, 8 bytes\r\n");
     printf("9: send CAN message:0x4444, 32 bytes\r\n");
     printf("T/t: send one LIN packet\r\n");
     printf("E/e: invalidate APP checksum + reset\r\n");

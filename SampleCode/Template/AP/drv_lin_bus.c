@@ -18,6 +18,7 @@ static volatile uint8_t g_u8LinRxId = 0U;
 static uint32_t g_u32LinBaudRate = 0U;
 
 /*_____ F U N C T I O N S __________________________________________________*/
+#if (ENABLE_LIN_BUS == 1)
 static uint8_t DRV_LIN_BUS_ComputeChecksum(const uint8_t *pu8Buf, uint8_t u8ByteCnt)
 {
     uint32_t u32CheckSum;
@@ -236,3 +237,4 @@ void UART0_IRQHandler(void)
         UART_ClearIntFlag(DRV_LIN_BUS_UART, UART_INTSTS_RLSINT_Msk | UART_INTSTS_BUFERRINT_Msk);
     }
 }
+#endif

@@ -6,6 +6,8 @@
 #include "NuMicro.h"
 
 /*_____ D E F I N I T I O N S ______________________________________________*/
+
+#define ENABLE_LIN_BUS                                  (0U)
 #define DRV_LIN_BUS_MAX_DATA_LEN                        (8U)
 
 typedef struct
