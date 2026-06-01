@@ -494,6 +494,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\..\..\Library\StdDriver\src\adc.c</FilePath>
             </File>
+            <File>
+              <FileName>wdt.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\..\..\..\M2A23BSP_ISP_UART_APROM\Library\StdDriver\src\wdt.c</FilePath>
+            </File>
           </Files>
         </Group>
       </Groups>

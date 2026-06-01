@@ -147,6 +147,66 @@ void delay_ms(uint16_t ms)
     }
 }
 
+static void WDT_Init(void)
+{
+    int32_t i32Ret;
+
+    /* WDT register is write-protected */
+    SYS_UnlockReg();
+
+    /* To check if system has been reset by WDT time-out reset or not */
+    if (WDT_GET_RESET_FLAG() == 1U)
+    {
+        WDT_CLEAR_RESET_FLAG();
+    }
+
+    /*
+     * WDT clock source in SYS_Init() is LIRC.
+     *
+     * Timeout table:
+     * TOUTSEL  2^N     Time
+     * 0000     2^4     0.417 ms
+     * 0001     2^6     1.667 ms
+     * 0010     2^8     6.667 ms
+     * 0011     2^10    26.667 ms
+     * 0100     2^12    106.667 ms
+     * 0101     2^14    426.667 ms
+     * 0110     2^16    1.707 s
+     * 0111     2^18    6.827 s
+     * 1000     2^20    27.307 s
+     *
+     * Reset delay table:
+     * 3 clocks      78.125 us
+     * 18 clocks     468.75 us
+     * 130 clocks    3.385 ms
+     * 1026 clocks   26.719 ms
+     */
+    /* Start WDT:
+     * timeout      : 2^18 WDT clocks
+     *                = 6.827 s
+     * reset delay  : 18 WDT clocks
+     *                = 468.75 us after timeout
+     * reset enable : TRUE
+     * wakeup       : FALSE
+     */
+    i32Ret = WDT_Open(WDT_TIMEOUT_2POW18,
+                      WDT_RESET_DELAY_18CLK,
+                      TRUE,
+                      FALSE);
+    if (i32Ret != WDT_OK)
+    {
+        printf("WDT open failed: %ld\r\n", (long)i32Ret);
+        while (1)
+        {
+        }
+    }
+
+    /* Feed once after open */
+    WDT_RESET_COUNTER();
+
+    SYS_LockReg();
+}
+
 static void APP_ProcessLinRx(void)
 {
     S_DRV_LIN_BUS_PACKET sLinPacket;
@@ -440,9 +500,11 @@ static void APP_StandbyWaitCanWake(void)
     uint32_t u32TimeOutCnt;
     uint32_t u32SysTickCtrl;
     uint32_t u32UartIntEn;
+    uint8_t u8WdtWasEnabled;
 
     u32SysTickCtrl = SysTick->CTRL;
     u32UartIntEn = APP_DEBUG_UART->INTEN;
+    u8WdtWasEnabled = ((WDT->CTL & WDT_CTL_WDTEN_Msk) != 0U) ? 1U : 0U;
 
     printf("Enter standby (CPU sleep). Wake-up source: CAN RX IRQ\r\n");
     u32TimeOutCnt = SystemCoreClock;
@@ -452,6 +514,14 @@ static void APP_StandbyWaitCanWake(void)
         {
             break;
         }
+    }
+
+    if (u8WdtWasEnabled != 0U)
+    {
+        SYS_UnlockReg();
+        WDT_RESET_COUNTER();
+        WDT_Close();
+        SYS_LockReg();
     }
 
     TIMER_DisableInt(TIMER1);
@@ -476,6 +546,10 @@ static void APP_StandbyWaitCanWake(void)
     TIMER_EnableInt(TIMER1);
     TIMER_Start(TIMER1);
     TIMER_Start(TIMER2);
+    if (u8WdtWasEnabled != 0U)
+    {
+        WDT_Init();
+    }
 
     printf("Wake-up by CAN activity\r\n");
 }
@@ -484,6 +558,7 @@ void loop(void)
 {
     uint8_t u8Idx = 0;
 
+    WDT_RESET_COUNTER();
     TimerService_Dispatch();
     CAN_Rx_process();
     GPIO_IN_OUT_proccess();
@@ -689,6 +764,10 @@ void SYS_Init(void)
     CLK_SetModuleClock(CANFD0_MODULE, CLK_CLKSEL0_CANFD0SEL_PLL_DIV2, CLK_CLKDIV1_CANFD0(1));
     CLK_EnableModuleClock(CANFD0_MODULE);
     
+    /* Enable WDT module clock */
+    CLK_EnableModuleClock(WDT_MODULE);
+    CLK_SetModuleClock(WDT_MODULE, CLK_CLKSEL1_WDTSEL_LIRC, 0);
+
     #if (ENABLE_LIN_BUS == 1)   // LIN BUS & UART DEBUG
     SET_UART0_RXD_PA6();
     SET_UART0_TXD_PA7();
@@ -726,6 +805,7 @@ int main(void)
     TIMER1_Init();
     TIMER2_Init();
     check_reset_source();
+    WDT_Init();
 
     SysTick_enable(1000);
 #if defined (ENABLE_TICK_EVENT)

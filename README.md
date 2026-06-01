@@ -7,7 +7,7 @@ M2A23 BSP example for:
 - `CAN FD`, `PWM`, `ADC`, `GPIO input measure`
 - optional `LIN` test flow
 
-Update: `2026/05/26`
+Update: `2026/06/01`
 
 ## Overview
 
@@ -21,6 +21,7 @@ Update: `2026/05/26`
   - verify `LDROM -> APROM` CAN ISP boot flow
   - verify `APROM` checksum handling by `SRecord`
   - verify `CAN FD TX/RX` and CAN wake-up
+  - verify `WDT` reset protection in normal run flow
   - verify PWM output, ADC sampling, and external pulse frequency / duty measurement
 
 ## Hardware
@@ -215,6 +216,49 @@ Note:
 
 ## Main Functions
 
+### Watchdog Timer
+
+Behavior:
+
+- `WDT` is enabled in AP application startup
+- WDT clock source is `LIRC`
+- current setting:
+  - timeout: `2^18` WDT clocks = `6.827s`
+  - reset delay: `18` WDT clocks = `468.75us`
+- `loop()` feeds WDT once per iteration by `WDT_RESET_COUNTER()`
+- before entering key `7` standby wait, application closes WDT temporarily
+- after CAN wake-up, application re-initializes WDT
+- reset source log will show `WDT Reset` if watchdog timeout occurs
+
+Related code:
+
+- [main.c](SampleCode/Template/AP/main.c)
+
+### Timeout / Delay Reference
+
+Current WDT timeout table:
+
+| TOUTSEL | Timeout | Time |
+| --- | ---: | ---: |
+| `0000` | `2^4` | `0.417 ms` |
+| `0001` | `2^6` | `1.667 ms` |
+| `0010` | `2^8` | `6.667 ms` |
+| `0011` | `2^10` | `26.667 ms` |
+| `0100` | `2^12` | `106.667 ms` |
+| `0101` | `2^14` | `426.667 ms` |
+| `0110` | `2^16` | `1.707 s` |
+| `0111` | `2^18` | `6.827 s` |
+| `1000` | `2^20` | `27.307 s` |
+
+Current WDT reset delay table:
+
+| Reset delay | Time |
+| ---: | ---: |
+| `3 clocks` | `78.125 us` |
+| `18 clocks` | `468.75 us` |
+| `130 clocks` | `3.385 ms` |
+| `1026 clocks` | `26.719 ms` |
+
 ### CAN FD TX / RX
 
 CAN application driver:
@@ -333,6 +377,7 @@ Important macros:
 #define ENABLE_ADC_LOG                  (1U)
 #define ENABLE_INPUT_MEASURE_LOG        (0U)
 #define APP_CHECKSUM_ADDR               (APP_END_ADDR - 4UL)
+/* WDT is enabled in code by WDT_Init() */
 ```
 
 Debug UART selection:
@@ -350,7 +395,8 @@ Debug UART selection:
 4. Power on or reset MCU.
 5. Confirm power-on log, PWM status, and key map.
 6. Trigger key `8` / `9` / `7` and confirm expected CAN behavior.
-7. If ADC or pulse input is under test, inject analog / digital signal and compare UART log with scope or meter.
+7. If WDT behavior is under test, temporarily stop feeding `WDT_RESET_COUNTER()` and confirm watchdog reset after about `6.827s`.
+8. If ADC or pulse input is under test, inject analog / digital signal and compare UART log with scope or meter.
 
 ## Validation
 
@@ -359,6 +405,7 @@ Debug UART selection:
   - ADC log
   - CAN RX / TX log
   - wake-up log
+  - WDT reset source log
 - External tool:
   - PCAN or CAN analyzer should observe the configured IDs and payloads
 - Scope:
@@ -382,7 +429,9 @@ Debug UART selection:
 - `AVDD` is currently calculated once during ADC init and reused in later ADC log output.
 - Input measure function is active even when its UART log is disabled.
 - CAN wake-up is based on CAN RX interrupt, not UART key input after entering standby.
+- WDT is intentionally closed before standby wait and re-opened after CAN wake-up.
 
 ## Revision
 
 - `2026/05/26`: rewrite README for current `ISP + CAN + PWM + ADC + LIN` project
+- `2026/06/01`: add WDT behavior, timeout table, and standby interaction notes
