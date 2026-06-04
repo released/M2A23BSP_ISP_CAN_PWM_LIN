@@ -138,11 +138,16 @@ static void CAN_PrintRxMessage(uint8_t u8FifoIdx, CANFD_FD_MSG_T *psRxMsg)
                u8FifoIdx, psRxMsg->bFDFormat ? "CAN FD" : "CAN", psRxMsg->u32Id);
     }
 
-    printf("Message Data(%02u bytes) : ", psRxMsg->u32DLC);
+    printf("Message Data(%02u bytes) : \r\n", psRxMsg->u32DLC);
 
     for (u8Cnt = 0; u8Cnt < psRxMsg->u32DLC; u8Cnt++)
     {
         printf("0x%02X ", psRxMsg->au8Data[u8Cnt]);
+
+        if ((u8Cnt+1)%8 ==0)
+        {
+            printf("\r\n");
+        }
     }
 
     printf("\r\n");

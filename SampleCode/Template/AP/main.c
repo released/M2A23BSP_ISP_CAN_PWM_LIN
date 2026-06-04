@@ -50,7 +50,7 @@ static const uint8_t g_au8LinTxData[LIN_BUS_TEST_FRAME_LEN] = {0x11U, 0x22U, 0x3
 static uint16_t g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 static uint8_t g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 
-#define ENABLE_ADC_LOG                                  (1U)
+#define ENABLE_ADC_LOG                                  (0U)
 #define ENABLE_INPUT_MEASURE_LOG                        (0U)
 /*_____ F U N C T I O N S __________________________________________________*/
 void SendChar_ToUART(int ch)
