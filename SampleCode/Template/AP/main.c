@@ -757,6 +757,8 @@ void SYS_Init(void)
 
     CLK_EnableModuleClock(PWM0_MODULE);
     CLK_SetModuleClock(PWM0_MODULE, CLK_CLKSEL3_PWM0SEL_PCLK0, 0);
+    CLK_EnableModuleClock(BPWM0_MODULE);
+    CLK_SetModuleClock(BPWM0_MODULE, CLK_CLKSEL3_BPWM0SEL_PCLK0, 0);
 
     CLK_EnableModuleClock(ADC0_MODULE);
     CLK_SetModuleClock(ADC0_MODULE, CLK_CLKSEL3_ADC0SEL_HCLK, CLK_CLKDIV0_ADC0(32));
@@ -782,6 +784,7 @@ void SYS_Init(void)
     SET_PWM0_CH0_PF5();
     SET_PWM0_CH2_PB3();
     SET_PWM0_CH4_PB1();
+    SET_BPWM0_CH3_PA3();
     SET_INT0_PB5();
     SET_INT1_PB4();
     SET_CANFD0_RXD_PC4();

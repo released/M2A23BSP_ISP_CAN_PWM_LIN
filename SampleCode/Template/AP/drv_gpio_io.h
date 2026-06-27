@@ -30,6 +30,7 @@ typedef enum
 #define LED_SET4                                        (PA3)
 #define LED_SET5                                        (PA4)
 #define LED_SET6                                        (PA5)
+#define DRV_GPIO_LED_SET4_GPIO_ENABLE                   (0U)
 #define SW_1                                            (PA15)
 #define SW_2                                            (PA14)
 #define SW_3                                            (PA13)

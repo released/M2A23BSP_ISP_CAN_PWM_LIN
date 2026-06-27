@@ -7,7 +7,7 @@ M2A23 BSP example for:
 - `CAN FD`, `PWM`, `ADC`, `GPIO input measure`
 - optional `LIN` test flow
 
-Update: `2026/06/01`
+Update: `2026/06/27`
 
 ## Overview
 
@@ -38,6 +38,8 @@ Update: `2026/06/01`
   `PB0=ADC0_CH0`, `PB2=ADC0_CH2`
 - PWM outputs:
   `PB1=PWM0_CH4`, `PB3=PWM0_CH2`, `PF5=PWM0_CH0`
+- BPWM output:
+  `PA3=BPWM0_CH3`, `250Hz`, default `0%`
 - External pulse inputs:
   `PB5=INT0`, `PB4=INT1`
 - Test equipment:
@@ -58,9 +60,12 @@ Update: `2026/06/01`
 | `PWM0_CH4` | `PB1` | Output | PWM group 3, `400Hz` |
 | `PWM0_CH2` | `PB3` | Output | PWM group 2, `200Hz` |
 | `PWM0_CH0` | `PF5` | Output | PWM group 1, `100Hz` |
+| `BPWM0_CH3` | `PA3` | Output | BPWM output, `250Hz`, default `0%` |
 | `INT0` | `PB5` | Input | input measure channel 1 |
 | `INT1` | `PB4` | Input | input measure channel 2 |
-| `LED1~LED6` | `PA0~PA5` | Output | GPIO output mirror |
+| `LED1~LED3` | `PA0~PA2` | Output | GPIO output mirror |
+| `LED4` | `PA3` | Disabled by define | switched to `BPWM0_CH3` when `DRV_GPIO_LED_SET4_GPIO_ENABLE = 0` |
+| `LED5~LED6` | `PA4~PA5` | Output | GPIO output mirror |
 | `SW1~SW4` | `PA15~PA12` | Input | GPIO input |
 | `SW5~SW6` | `PC0~PC1` | Input | GPIO input |
 
@@ -213,6 +218,87 @@ Note:
 - current default log setting is:
   - `ENABLE_ADC_LOG = 1`
   - `ENABLE_INPUT_MEASURE_LOG = 0`
+
+### GPIO / BPWM Define
+
+Related files:
+
+- [drv_gpio_io.h](SampleCode/Template/AP/drv_gpio_io.h)
+- [drv_pwm.h](SampleCode/Template/AP/drv_pwm.h)
+- [drv_pwm.c](SampleCode/Template/AP/drv_pwm.c)
+
+Current `PA3` behavior is controlled by:
+
+```c
+#define DRV_GPIO_LED_SET4_GPIO_ENABLE                   (0U)
+```
+
+PWM / BPWM driver defines:
+
+```c
+#define DRV_PWM_GROUP1_CHANNEL                          (0U)
+#define DRV_PWM_GROUP2_CHANNEL                          (2U)
+#define DRV_PWM_GROUP3_CHANNEL                          (4U)
+#define DRV_PWM_GROUP1_FREQ_HZ                          (100UL)
+#define DRV_PWM_GROUP2_FREQ_HZ                          (200UL)
+#define DRV_PWM_GROUP3_FREQ_HZ                          (400UL)
+#define DRV_BPWM_CHANNEL                                (3U)
+#define DRV_BPWM_FREQ_HZ                                (250UL)
+```
+
+Meaning:
+
+- `1U`
+  `PA3` stays as `LED_SET4` GPIO output
+- `0U`
+  `PA3` GPIO mirror is disabled
+  `PA3` is switched to `BPWM0_CH3`
+
+Current GPIO / BPWM related pin defines:
+
+```c
+#define LED_SET1                                        (PA0)
+#define LED_SET2                                        (PA1)
+#define LED_SET3                                        (PA2)
+#define LED_SET4                                        (PA3)
+#define LED_SET5                                        (PA4)
+#define LED_SET6                                        (PA5)
+#define SW_1                                            (PA15)
+#define SW_2                                            (PA14)
+#define SW_3                                            (PA13)
+#define SW_4                                            (PA12)
+#define SW_5                                            (PC0)
+#define SW_6                                            (PC1)
+```
+
+### Added BPWM Function
+
+New API:
+
+```c
+void DRV_BPWM_SetOutputDutyCycle(uint8_t u8Duty);
+```
+
+Behavior:
+
+- output pin:
+  `PA3 = BPWM0_CH3`
+- output frequency:
+  fixed `250Hz`
+- default startup duty:
+  `0%`
+- when duty is `0U`:
+  output is forced to logic low
+- integration note:
+  `PA3` must be released from `LED_SET4` GPIO mode by setting `DRV_GPIO_LED_SET4_GPIO_ENABLE = 0U`
+
+Usage example:
+
+```c
+DRV_BPWM_SetOutputDutyCycle(25U);
+DRV_BPWM_SetOutputDutyCycle(50U);
+DRV_BPWM_SetOutputDutyCycle(0U);
+```
 
 ## Main Functions
 

@@ -128,7 +128,11 @@ void DRV_GPIO_IO_Init(void)
     SET_GPIO_PA0();
     SET_GPIO_PA1();
     SET_GPIO_PA2();
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE == 1U)
     SET_GPIO_PA3();
+#else
+    SET_BPWM0_CH3_PA3();
+#endif
     SET_GPIO_PA4();
     SET_GPIO_PA5();
     SET_GPIO_PA12();
@@ -139,7 +143,13 @@ void DRV_GPIO_IO_Init(void)
     SET_GPIO_PC1();
     SYS_LockReg();
 
-    GPIO_SetMode(PA, BIT0 | BIT1 | BIT2 | BIT3 | BIT4 | BIT5, GPIO_MODE_OUTPUT);
+    GPIO_SetMode(PA,
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE == 1U)
+                 BIT0 | BIT1 | BIT2 | BIT3 | BIT4 | BIT5,
+#else
+                 BIT0 | BIT1 | BIT2 | BIT4 | BIT5,
+#endif
+                 GPIO_MODE_OUTPUT);
     GPIO_SetMode(PA, DRV_GPIO_BUTTON_PA_MASK, GPIO_MODE_INPUT);
     GPIO_SetMode(PC, DRV_GPIO_BUTTON_PC_MASK, GPIO_MODE_INPUT);
     GPIO_SetMode(PB, DRV_GPIO_INPUT_MASK, GPIO_MODE_INPUT);
@@ -148,7 +158,9 @@ void DRV_GPIO_IO_Init(void)
     LED_SET1 = 0U;
     LED_SET2 = 0U;
     LED_SET3 = 0U;
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE == 1U)
     LED_SET4 = 0U;
+#endif
     LED_SET5 = 0U;
     LED_SET6 = 0U;
 
@@ -179,7 +191,9 @@ void GPIO_IN_OUT_proccess(void)
     LED_SET1 = (SW_1 != 0U) ? 1U : 0U;
     LED_SET2 = (SW_2 != 0U) ? 1U : 0U;
     LED_SET3 = (SW_3 != 0U) ? 1U : 0U;
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE == 1U)
     LED_SET4 = (SW_4 != 0U) ? 1U : 0U;
+#endif
     LED_SET5 = (SW_5 != 0U) ? 1U : 0U;
     LED_SET6 = (SW_6 != 0U) ? 1U : 0U;
 }
@@ -192,6 +206,13 @@ void DRV_GPIO_IO_SetLed(E_DRV_GPIO_LED eLed, uint8_t u8On)
     {
         return;
     }
+
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE != 1U)
+    if (eLed == eDRV_GPIO_LED4)
+    {
+        return;
+    }
+#endif
 
     psPin = &g_asLedPin[(uint32_t)eLed];
     GPIO_PIN_DATA(psPin->u8PortIndex, psPin->u8Pin) = (u8On != 0U) ? 1U : 0U;
@@ -206,6 +227,13 @@ void DRV_GPIO_IO_ToggleLed(E_DRV_GPIO_LED eLed)
     {
         return;
     }
+
+#if (DRV_GPIO_LED_SET4_GPIO_ENABLE != 1U)
+    if (eLed == eDRV_GPIO_LED4)
+    {
+        return;
+    }
+#endif
 
     psPin = &g_asLedPin[(uint32_t)eLed];
     u32Current = DRV_GPIO_IO_ReadPin(psPin);
