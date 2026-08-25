@@ -557,10 +557,11 @@ static void APP_StandbyWaitCanWake(void)
 void loop(void)
 {
     uint8_t u8Idx = 0;
+    E_DRV_CAN_TX_RESULT eCanTxResult;
 
     WDT_RESET_COUNTER();
     TimerService_Dispatch();
-    CAN_Rx_process();
+    CAN_Process(get_tick());
     GPIO_IN_OUT_proccess();
     APP_ProcessInputMeasureEvents();
     
@@ -594,7 +595,6 @@ void loop(void)
 
     if (FLAG_PROJ_SEND_CAN_1)
     {
-        FLAG_PROJ_SEND_CAN_1 = 0;
         g_sTxMsgFrame.au8Data[0] = 0x40U;
         g_sTxMsgFrame.au8Data[1] = 0x20U;
         g_sTxMsgFrame.au8Data[2] = 0x85U;
@@ -604,20 +604,27 @@ void loop(void)
         g_sTxMsgFrame.au8Data[6] = 0x5AU;
         g_sTxMsgFrame.au8Data[7] = 0xFFU;
 
-        CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_SID, 0x99, 8);
+        eCanTxResult = CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_SID, 0x99, 8);
+        if ((eCanTxResult == eDRV_CAN_TX_QUEUED) || (eCanTxResult == eDRV_CAN_TX_INVALID))
+        {
+            FLAG_PROJ_SEND_CAN_1 = 0;
+        }
     }
 
     if (FLAG_PROJ_SEND_CAN_2)
     {
         uint8_t u8Idx;
 
-        FLAG_PROJ_SEND_CAN_2 = 0;
         for (u8Idx = 0U; u8Idx < 32U; u8Idx++)
         {
             g_sTxMsgFrame.au8Data[u8Idx] = 0x20U + u8Idx;
         }
 
-        CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_XID, 0x4444, 32);
+        eCanTxResult = CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_XID, 0x4444, 32);
+        if ((eCanTxResult == eDRV_CAN_TX_QUEUED) || (eCanTxResult == eDRV_CAN_TX_INVALID))
+        {
+            FLAG_PROJ_SEND_CAN_2 = 0;
+        }
     }
 
     #if (ENABLE_LIN_BUS == 1)

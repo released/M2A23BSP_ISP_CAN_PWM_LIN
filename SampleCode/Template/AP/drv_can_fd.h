@@ -46,6 +46,16 @@
 #define CAN_APP_DATA_BITRATE          (2000000U)
 /*_____ M A C R O S ________________________________________________________*/
 
+typedef enum
+{
+    /* The caller may clear its pending event only after this result. */
+    eDRV_CAN_TX_QUEUED = 0,
+    eDRV_CAN_TX_BUSY,
+    eDRV_CAN_TX_BUS_OFF,
+    eDRV_CAN_TX_INVALID,
+    eDRV_CAN_TX_CONTROLLER_ERROR
+} E_DRV_CAN_TX_RESULT;
+
 /*_____ F U N C T I O N S __________________________________________________*/
 extern CANFD_FD_MSG_T g_sRxMsgFrame;
 extern CANFD_FD_MSG_T g_sTxMsgFrame;
@@ -53,8 +63,12 @@ extern uint8_t g_au8CanRxDataBC[32];
 extern volatile uint8_t g_u8CanRxDataBCUpdated;
 extern volatile uint32_t g_u32CanIrqStatus;
 
-void CAN_Rx_process(void);
-void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE eIdType, uint32_t u32Id, uint8_t u8Len);
+void CAN_Process(uint32_t u32TickMs);
+E_DRV_CAN_TX_RESULT CAN_SendMessage(uint8_t en_can_fd,
+                                    CANFD_FD_MSG_T *psTxMsg,
+                                    E_CANFD_ID_TYPE eIdType,
+                                    uint32_t u32Id,
+                                    uint8_t u8Len);
 void CAN_Init(void);
 
 #endif //__DRV_CAN_FD_H__

@@ -357,6 +357,33 @@ Behavior:
 - key `9` sends XID `0x4444`, `32 bytes`
 - received CAN / CAN FD frames are printed on UART
 - specific SID `0xBC` is parsed into `g_au8CanRxDataBC[0..7]`
+- the three default dedicated Tx buffers are selected round-robin; a pending buffer is never overwritten
+- `CAN_SendMessage()` returns `eDRV_CAN_TX_QUEUED`, `BUSY`, `BUS_OFF`, `INVALID`, or `CONTROLLER_ERROR`
+- an application Tx event is cleared only after `eDRV_CAN_TX_QUEUED`; `BUSY` and `BUS_OFF` remain pending for a later loop
+- Error Warning, Error Passive, Bus-Off, arbitration/data protocol error, and Message RAM access failure interrupts are enabled
+- the ISR only records status; `CAN_Process(get_tick())` logs errors and performs Bus-Off recovery in main-loop context
+- recovery enters INIT, cancels pending Tx buffers, clears Restricted Operation Mode/error flags, returns to normal mode, and retries after a bounded timeout
+
+`eDRV_CAN_TX_QUEUED` means that the hardware accepted the request. It does not mean that another CAN node has ACKed the frame. A periodic application event should use this pattern:
+
+```c
+E_DRV_CAN_TX_RESULT eResult;
+
+eResult = CAN_SendMessage(FALSE, &g_sTxMsgFrame, eCANFD_SID, 0x391U, 8U);
+if (eResult == eDRV_CAN_TX_QUEUED)
+{
+    FLAG_SEND_CAN_391 = 0U;
+}
+```
+
+Bus-Off bench test:
+
+1. Make the MCU transmit while no active CAN node provides ACK, then confirm `CAN error` and `CAN Bus-Off recovery start` logs.
+2. While Bus-Off is active, trigger another key `8` or `9`; this not-yet-queued event must remain pending.
+3. Reconnect an active analyzer/node with matching nominal/data bitrate.
+4. Confirm `CAN Bus-Off recovery completed` and that the retained event is queued afterward.
+
+Recovery cancels hardware requests that were already pending when Bus-Off occurred. `QUEUED` is therefore not an end-to-end delivery guarantee; a protocol that requires guaranteed one-shot delivery still needs a Tx-complete/application-ACK policy.
 
 Images:
 

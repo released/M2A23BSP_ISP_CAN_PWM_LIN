@@ -14,14 +14,185 @@ uint8_t g_au8CanRxDataBC[32] = {0};
 volatile uint8_t g_u8CanRxDataBCUpdated = 0U;
 
 volatile uint32_t g_u32CanIrqStatus = 0;
-static uint8_t g_u8CanFdModeOpened = 0;
-uint8_t msg_tx_buffer_idx = 0;
+static volatile uint8_t g_u8CanBusOffDetected = 0U;
+static volatile uint32_t g_u32CanLastPsr = 0U;
+static volatile uint32_t g_u32CanLastEcr = 0U;
+static volatile uint32_t g_u32CanLastCccr = 0U;
+static volatile uint32_t g_u32CanLastTxbrp = 0U;
+static uint8_t g_u8CanFdModeOpened = 0U;
+static uint8_t g_u8CanTxBufferCount = 0U;
+static uint8_t g_u8CanNextTxBuffer = 0U;
+static uint8_t g_u8CanRecoveryState = 0U;
+static uint8_t g_u8CanErrorLogValid = 0U;
+static uint8_t g_u8CanTxFailureReported = 0U;
+static uint32_t g_u32CanRecoveryTick = 0U;
+static uint32_t g_u32CanErrorLogTick = 0U;
+static uint32_t g_u32CanBusOffCount = 0U;
+static uint32_t g_u32CanRecoveryCount = 0U;
+static uint32_t g_u32CanRecoveryFailCount = 0U;
 /*_____ M A C R O S ________________________________________________________*/
-#define CANFD_RX_INT_MASK    (CANFD_IR_RF0N_Msk | CANFD_IR_RF0L_Msk | CANFD_IR_RF1N_Msk | CANFD_IR_RF1L_Msk)
-#define CANFD_TX_RETRY_MAX   (10U)
-#define CANFD_TX_DATA_MAX_LEN (64U)
+#define CANFD_RX_INT_MASK         (CANFD_IR_RF0N_Msk | CANFD_IR_RF0L_Msk | CANFD_IR_RF1N_Msk | CANFD_IR_RF1L_Msk)
+#define CANFD_ERROR_INT_MASK      (CANFD_IR_BO_Msk | CANFD_IR_EW_Msk | CANFD_IR_EP_Msk | CANFD_IR_PEA_Msk | \
+                                   CANFD_IR_PED_Msk | CANFD_IR_MRAF_Msk)
+#define CANFD_ALL_INT_MASK        (CANFD_RX_INT_MASK | CANFD_ERROR_INT_MASK)
+#define CANFD_ERROR_IE_MASK       (CANFD_IE_BOE_Msk | CANFD_IE_EWE_Msk | CANFD_IE_EPE_Msk | CANFD_IE_PEAE_Msk | \
+                                   CANFD_IE_PEDE_Msk | CANFD_IE_MRAFE_Msk)
+#define CANFD_TX_DATA_MAX_LEN     (64U)
+#define CANFD_TX_BUFFER_MAX       (32U)
+#define CANFD_ERROR_LOG_INTERVAL  (1000U)
+#define CANFD_RECOVERY_RETRY_MS   (100U)
+#define CANFD_RECOVERY_TIMEOUT_MS (1000U)
+
+#define CANFD_RECOVERY_IDLE       (0U)
+#define CANFD_RECOVERY_REQUESTED  (1U)
+#define CANFD_RECOVERY_WAIT       (2U)
+#define CANFD_RECOVERY_RETRY_WAIT (3U)
 
 /*_____ F U N C T I O N S __________________________________________________*/
+
+static uint8_t CAN_HasElapsed(uint32_t u32Now, uint32_t u32Start, uint32_t u32Interval)
+{
+    return ((uint32_t)(u32Now - u32Start) >= u32Interval) ? 1U : 0U;
+}
+
+static uint32_t CAN_GetTxBufferMask(void)
+{
+    if (g_u8CanTxBufferCount >= CANFD_TX_BUFFER_MAX)
+    {
+        return 0xFFFFFFFFUL;
+    }
+
+    if (g_u8CanTxBufferCount == 0U)
+    {
+        return 0U;
+    }
+
+    return (1UL << g_u8CanTxBufferCount) - 1UL;
+}
+
+static int32_t CAN_FindFreeTxBuffer(void)
+{
+    uint32_t u32Pending;
+    uint8_t u8Offset;
+    uint8_t u8BufferIdx;
+
+    u32Pending = CANFD0->TXBRP;
+    for (u8Offset = 0U; u8Offset < g_u8CanTxBufferCount; u8Offset++)
+    {
+        u8BufferIdx = (uint8_t)((g_u8CanNextTxBuffer + u8Offset) % g_u8CanTxBufferCount);
+        if ((u32Pending & (1UL << u8BufferIdx)) == 0U)
+        {
+            return (int32_t)u8BufferIdx;
+        }
+    }
+
+    return -1;
+}
+
+static void CAN_PrintErrorSnapshot(uint32_t u32IrqStatus,
+                                   uint32_t u32Psr,
+                                   uint32_t u32Ecr,
+                                   uint32_t u32Cccr,
+                                   uint32_t u32Txbrp)
+{
+    printf("CAN error: IR=0x%08X PSR=0x%08X ECR=0x%08X CCCR=0x%08X TXBRP=0x%08X\r\n",
+           u32IrqStatus, u32Psr, u32Ecr, u32Cccr, u32Txbrp);
+}
+
+static void CAN_RequestBusOffRecovery(void)
+{
+    if (g_u8CanRecoveryState == CANFD_RECOVERY_IDLE)
+    {
+        g_u8CanRecoveryState = CANFD_RECOVERY_REQUESTED;
+        g_u32CanBusOffCount++;
+    }
+}
+
+static void CAN_LatchPolledBusOff(void)
+{
+    if ((g_u8CanRecoveryState != CANFD_RECOVERY_IDLE) || (g_u8CanBusOffDetected != 0U))
+    {
+        return;
+    }
+
+    __disable_irq();
+    g_u32CanLastPsr = CANFD0->PSR;
+    g_u32CanLastEcr = CANFD0->ECR;
+    g_u32CanLastCccr = CANFD0->CCCR;
+    g_u32CanLastTxbrp = CANFD0->TXBRP;
+    g_u8CanBusOffDetected = 1U;
+    __enable_irq();
+}
+
+static void CAN_ServiceBusOffRecovery(uint32_t u32TickMs)
+{
+    uint32_t u32TxBufferMask;
+    int32_t i32Result;
+
+    if (g_u8CanRecoveryState == CANFD_RECOVERY_IDLE)
+    {
+        return;
+    }
+
+    if (g_u8CanRecoveryState == CANFD_RECOVERY_WAIT)
+    {
+        if (((CANFD0->PSR & CANFD_PSR_BO_Msk) == 0U) &&
+            ((CANFD0->CCCR & CANFD_CCCR_INIT_Msk) == 0U))
+        {
+            g_u8CanRecoveryState = CANFD_RECOVERY_IDLE;
+            g_u32CanRecoveryCount++;
+            printf("CAN Bus-Off recovery completed (event=%u, recovered=%u)\r\n",
+                   g_u32CanBusOffCount, g_u32CanRecoveryCount);
+        }
+        else if (CAN_HasElapsed(u32TickMs, g_u32CanRecoveryTick, CANFD_RECOVERY_TIMEOUT_MS) != 0U)
+        {
+            g_u8CanRecoveryState = CANFD_RECOVERY_RETRY_WAIT;
+            g_u32CanRecoveryTick = u32TickMs;
+            g_u32CanRecoveryFailCount++;
+            printf("CAN Bus-Off recovery timeout (fail=%u), retry pending\r\n",
+                   g_u32CanRecoveryFailCount);
+        }
+        return;
+    }
+
+    if (g_u8CanRecoveryState == CANFD_RECOVERY_RETRY_WAIT)
+    {
+        if (CAN_HasElapsed(u32TickMs, g_u32CanRecoveryTick, CANFD_RECOVERY_RETRY_MS) == 0U)
+        {
+            return;
+        }
+        g_u8CanRecoveryState = CANFD_RECOVERY_REQUESTED;
+    }
+
+    printf("CAN Bus-Off recovery start (event=%u)\r\n", g_u32CanBusOffCount);
+    i32Result = CANFD_RunToNormal(CANFD0, FALSE);
+    if (i32Result != CANFD_OK)
+    {
+        g_u8CanRecoveryState = CANFD_RECOVERY_RETRY_WAIT;
+        g_u32CanRecoveryTick = u32TickMs;
+        g_u32CanRecoveryFailCount++;
+        printf("CAN Bus-Off enter INIT failed (%ld)\r\n", (long)i32Result);
+        return;
+    }
+
+    u32TxBufferMask = CAN_GetTxBufferMask();
+    CANFD0->TXBCR = CANFD0->TXBRP & u32TxBufferMask;
+    CANFD0->CCCR &= ~CANFD_CCCR_ASM_Msk;
+    CANFD_ClearStatusFlag(CANFD0, CANFD_ERROR_INT_MASK);
+
+    i32Result = CANFD_RunToNormal(CANFD0, TRUE);
+    if (i32Result != CANFD_OK)
+    {
+        g_u8CanRecoveryState = CANFD_RECOVERY_RETRY_WAIT;
+        g_u32CanRecoveryTick = u32TickMs;
+        g_u32CanRecoveryFailCount++;
+        printf("CAN Bus-Off leave INIT failed (%ld)\r\n", (long)i32Result);
+        return;
+    }
+
+    g_u8CanRecoveryState = CANFD_RECOVERY_WAIT;
+    g_u32CanRecoveryTick = u32TickMs;
+}
 
 static void CAN_ParseRxMessage(CANFD_FD_MSG_T *psRxMsg)
 {
@@ -173,7 +344,9 @@ void CANFD20_IRQHandler(void)
 void CANFD20_IRQHandler(void)
 #endif
 {
-    uint32_t u32IrqStatus = CANFD_GetStatusFlag(CANFD0, CANFD_RX_INT_MASK);
+    uint32_t u32IrqStatus;
+
+    u32IrqStatus = CANFD_GetStatusFlag(CANFD0, CANFD_ALL_INT_MASK);
 
     if (u32IrqStatus == 0)
     {
@@ -181,20 +354,81 @@ void CANFD20_IRQHandler(void)
     }
 
     g_u32CanIrqStatus |= u32IrqStatus;
+    if (u32IrqStatus & CANFD_ERROR_INT_MASK)
+    {
+        g_u32CanLastPsr = CANFD0->PSR;
+        g_u32CanLastEcr = CANFD0->ECR;
+        g_u32CanLastCccr = CANFD0->CCCR;
+        g_u32CanLastTxbrp = CANFD0->TXBRP;
+
+        if ((u32IrqStatus & CANFD_IR_BO_Msk) && (g_u32CanLastPsr & CANFD_PSR_BO_Msk))
+        {
+            g_u8CanBusOffDetected = 1U;
+        }
+    }
     CANFD_ClearStatusFlag(CANFD0, u32IrqStatus);
 }
 
-void CAN_Rx_process(void)
+void CAN_Process(uint32_t u32TickMs)
 {
     uint32_t u32IrqStatus;
+    uint32_t u32LastPsr;
+    uint32_t u32LastEcr;
+    uint32_t u32LastCccr;
+    uint32_t u32LastTxbrp;
     uint32_t u32RxResult;
     uint32_t u32Fifo0FillLevel;
     uint32_t u32Fifo1FillLevel;
+    uint8_t u8BusOffDetected;
 
     __disable_irq();
     u32IrqStatus = g_u32CanIrqStatus;
     g_u32CanIrqStatus = 0;
+    u8BusOffDetected = g_u8CanBusOffDetected;
+    g_u8CanBusOffDetected = 0U;
+    u32LastPsr = g_u32CanLastPsr;
+    u32LastEcr = g_u32CanLastEcr;
+    u32LastCccr = g_u32CanLastCccr;
+    u32LastTxbrp = g_u32CanLastTxbrp;
     __enable_irq();
+
+    if (u8BusOffDetected != 0U)
+    {
+        CAN_PrintErrorSnapshot(u32IrqStatus | CANFD_IR_BO_Msk,
+                               u32LastPsr,
+                               u32LastEcr,
+                               u32LastCccr,
+                               u32LastTxbrp);
+        CAN_RequestBusOffRecovery();
+    }
+    else if ((u32IrqStatus & CANFD_ERROR_INT_MASK) != 0U)
+    {
+        if ((g_u8CanErrorLogValid == 0U) ||
+            (CAN_HasElapsed(u32TickMs, g_u32CanErrorLogTick, CANFD_ERROR_LOG_INTERVAL) != 0U))
+        {
+            g_u8CanErrorLogValid = 1U;
+            g_u32CanErrorLogTick = u32TickMs;
+            CAN_PrintErrorSnapshot(u32IrqStatus, u32LastPsr, u32LastEcr, u32LastCccr, u32LastTxbrp);
+        }
+    }
+
+    if ((CANFD0->CCCR & CANFD_CCCR_ASM_Msk) != 0U)
+    {
+        CANFD0->CCCR &= ~CANFD_CCCR_ASM_Msk;
+    }
+
+    if (((CANFD0->PSR & CANFD_PSR_BO_Msk) != 0U) &&
+        (g_u8CanRecoveryState == CANFD_RECOVERY_IDLE))
+    {
+        CAN_PrintErrorSnapshot(CANFD_IR_BO_Msk,
+                               CANFD0->PSR,
+                               CANFD0->ECR,
+                               CANFD0->CCCR,
+                               CANFD0->TXBRP);
+        CAN_RequestBusOffRecovery();
+    }
+
+    CAN_ServiceBusOffRecovery(u32TickMs);
 
     u32Fifo0FillLevel = CAN_RxFifo0FillLevel();
     u32Fifo1FillLevel = CAN_RxFifo1FillLevel();
@@ -245,15 +479,34 @@ void CAN_Rx_process(void)
     memset(&g_sRxMsgFrame, 0, sizeof(g_sRxMsgFrame));
 }
 
-void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE eIdType, uint32_t u32Id, uint8_t u8Len)
+E_DRV_CAN_TX_RESULT CAN_SendMessage(uint8_t en_can_fd,
+                                    CANFD_FD_MSG_T *psTxMsg,
+                                    E_CANFD_ID_TYPE eIdType,
+                                    uint32_t u32Id,
+                                    uint8_t u8Len)
 {
-    uint8_t u8Retry;
+    int32_t i32TxBufferIdx;
+
+    if ((psTxMsg == NULL) || (g_u8CanTxBufferCount == 0U))
+    {
+        return eDRV_CAN_TX_INVALID;
+    }
 
     if ((en_can_fd != 0U) && (g_u8CanFdModeOpened == 0U))
     {
         printf("Blocked FD TX (ID:0x%08X): controller is in Classical CAN mode\r\n", u32Id);
         printf("Set CAN_APP_ENABLE_FD_MODE=1 and set PCAN to CAN FD mode first.\r\n");
-        return;
+        return eDRV_CAN_TX_INVALID;
+    }
+
+    if (((CANFD0->PSR & CANFD_PSR_BO_Msk) != 0U) ||
+        (g_u8CanRecoveryState != CANFD_RECOVERY_IDLE))
+    {
+        if ((CANFD0->PSR & CANFD_PSR_BO_Msk) != 0U)
+        {
+            CAN_LatchPolledBusOff();
+        }
+        return eDRV_CAN_TX_BUS_OFF;
     }
 
     psTxMsg->u32Id = u32Id;
@@ -273,32 +526,34 @@ void CAN_SendMessage(uint8_t en_can_fd, CANFD_FD_MSG_T *psTxMsg, E_CANFD_ID_TYPE
 
     psTxMsg->u32DLC = u8Len;
 
-    #if 1
-    /* use message buffer 0 */
-    if (eIdType == eCANFD_SID)
-        printf("Send to transmit message 0x%08x (11-bit)\n", psTxMsg->u32Id);
-    else
-        printf("Send to transmit message 0x%08x (29-bit)\n", psTxMsg->u32Id);
-    #endif
-
-    // if (CANFD_TransmitTxMsg(CANFD0, 0, psTxMsg) != eCANFD_TRANSMIT_SUCCESS)
-    // {
-    //     printf("Failed to transmit message\n");
-    // }
-
-    for (u8Retry = 0; u8Retry < CANFD_TX_RETRY_MAX; u8Retry++)
+    i32TxBufferIdx = CAN_FindFreeTxBuffer();
+    if (i32TxBufferIdx < 0)
     {
-        if (CANFD_TransmitTxMsg(CANFD0, msg_tx_buffer_idx, psTxMsg) == eCANFD_TRANSMIT_SUCCESS)
-        {
-            #if 1
-            printf("tx request queued\r\n");
-            #endif
-            return;
-        }
+        return eDRV_CAN_TX_BUSY;
     }
 
-    printf("Failed to transmit message (ID:0x%08X)\r\n", psTxMsg->u32Id);
-    CAN_DumpBusStatus();
+    if (CANFD_TransmitTxMsg(CANFD0, (uint32_t)i32TxBufferIdx, psTxMsg) == eCANFD_TRANSMIT_SUCCESS)
+    {
+        g_u8CanNextTxBuffer = (uint8_t)(((uint32_t)i32TxBufferIdx + 1U) % g_u8CanTxBufferCount);
+        g_u8CanTxFailureReported = 0U;
+        return eDRV_CAN_TX_QUEUED;
+    }
+
+    if ((CANFD0->PSR & CANFD_PSR_BO_Msk) != 0U)
+    {
+        CAN_LatchPolledBusOff();
+        return eDRV_CAN_TX_BUS_OFF;
+    }
+
+    if (g_u8CanTxFailureReported == 0U)
+    {
+        g_u8CanTxFailureReported = 1U;
+        printf("Failed to queue CAN message (ID:0x%08X, buffer=%ld)\r\n",
+               psTxMsg->u32Id, (long)i32TxBufferIdx);
+        CAN_DumpBusStatus();
+    }
+
+    return eDRV_CAN_TX_CONTROLLER_ERROR;
 }
 
 
@@ -370,6 +625,27 @@ void CAN_Init(void)
     g_u8CanFdModeOpened = 0U;
 #endif
 
+    g_u8CanTxBufferCount = (uint8_t)sCANFD_Config.sElemSize.u32TxBuf;
+    if (g_u8CanTxBufferCount > CANFD_TX_BUFFER_MAX)
+    {
+        g_u8CanTxBufferCount = CANFD_TX_BUFFER_MAX;
+    }
+    g_u8CanNextTxBuffer = 0U;
+    g_u8CanRecoveryState = CANFD_RECOVERY_IDLE;
+    g_u8CanBusOffDetected = 0U;
+    g_u8CanErrorLogValid = 0U;
+    g_u8CanTxFailureReported = 0U;
+    g_u32CanIrqStatus = 0U;
+    g_u32CanLastPsr = 0U;
+    g_u32CanLastEcr = 0U;
+    g_u32CanLastCccr = 0U;
+    g_u32CanLastTxbrp = 0U;
+    g_u32CanRecoveryTick = 0U;
+    g_u32CanErrorLogTick = 0U;
+    g_u32CanBusOffCount = 0U;
+    g_u32CanRecoveryCount = 0U;
+    g_u32CanRecoveryFailCount = 0U;
+
     sCANFD_Config.sBtConfig.sNormBitRate.u32BitRate = u32NormBitRate;
     if (g_u8CanFdModeOpened)
     {
@@ -429,8 +705,13 @@ void CAN_Init(void)
 
     /* Non-matching Frames with Extended ID and Standard ID are stored in Rx FIFO0 or Rx FIFO1, reject all remote frames with 11-bit standard IDs and 29-bit extended IDs */
     CANFD_SetGFC(CANFD0, eCANFD_ACC_NON_MATCH_FRM_RX_FIFO0, eCANFD_ACC_NON_MATCH_FRM_RX_FIFO1, 1, 1);
-    /* Enable RX FIFO New message, Message lost interrupt using interrupt line 0 */
-    CANFD_EnableInt(CANFD0, (CANFD_IE_RF0NE_Msk | CANFD_IE_RF0LE_Msk | CANFD_IE_RF1NE_Msk | CANFD_IE_RF1LE_Msk), 0, 0, 0);
+    /* RX and CAN error interrupts use interrupt line 0. Recovery runs in CAN_Process(). */
+    CANFD_EnableInt(CANFD0,
+                    (CANFD_IE_RF0NE_Msk | CANFD_IE_RF0LE_Msk | CANFD_IE_RF1NE_Msk | CANFD_IE_RF1LE_Msk |
+                     CANFD_ERROR_IE_MASK),
+                    0,
+                    0,
+                    0);
 
 #if (CANFD_MODULE == 0)
     NVIC_EnableIRQ(CANFD00_IRQn);
