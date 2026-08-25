@@ -364,16 +364,12 @@ Behavior:
 - `CAN_SendMessage()` returns `eDRV_CAN_TX_QUEUED`, `BUSY`, `BUS_OFF`, `INVALID`, or `CONTROLLER_ERROR`
 - an application Tx event is cleared only after `eDRV_CAN_TX_QUEUED`; `BUSY` and `BUS_OFF` remain pending for a later loop
 
-`eDRV_CAN_TX_QUEUED` means that the hardware accepted the request. It does not mean that another CAN node has ACKed the frame. A periodic application event should use this pattern:
+`eDRV_CAN_TX_QUEUED` means that the hardware accepted the request. It does not mean that another CAN node has ACKed the frame. The application should advance its transmit state only after receiving this result.
 
 ```c
 E_DRV_CAN_TX_RESULT eResult;
 
 eResult = CAN_SendMessage(FALSE, &g_sTxMsgFrame, eCANFD_SID, 0x391U, 8U);
-if (eResult == eDRV_CAN_TX_QUEUED)
-{
-    FLAG_SEND_CAN_391 = 0U;
-}
 ```
 
 #### CAN Bus-Off recovery
