@@ -367,9 +367,10 @@ Behavior:
 `eDRV_CAN_TX_QUEUED` means that the hardware accepted the request. It does not mean that another CAN node has ACKed the frame. The application should advance its transmit state only after receiving this result.
 
 ```c
-E_DRV_CAN_TX_RESULT eResult;
+E_DRV_CAN_TX_RESULT eCanTxResult;
 
-eResult = CAN_SendMessage(FALSE, &g_sTxMsgFrame, eCANFD_SID, 0x391U, 8U);
+eCanTxResult = CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_SID, 0x99, 8);
+eCanTxResult = CAN_SendMessage(TRUE, &g_sTxMsgFrame, eCANFD_XID, 0x4444, 32);
 ```
 
 #### CAN Bus-Off recovery
