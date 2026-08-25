@@ -357,12 +357,12 @@ Behavior:
 - key `9` sends XID `0x4444`, `32 bytes`
 - received CAN / CAN FD frames are printed on UART
 - specific SID `0xBC` is parsed into `g_au8CanRxDataBC[0..7]`
+
+#### Tx queued handling
+
 - the three default dedicated Tx buffers are selected round-robin; a pending buffer is never overwritten
 - `CAN_SendMessage()` returns `eDRV_CAN_TX_QUEUED`, `BUSY`, `BUS_OFF`, `INVALID`, or `CONTROLLER_ERROR`
 - an application Tx event is cleared only after `eDRV_CAN_TX_QUEUED`; `BUSY` and `BUS_OFF` remain pending for a later loop
-- Error Warning, Error Passive, Bus-Off, arbitration/data protocol error, and Message RAM access failure interrupts are enabled
-- the ISR only records status; `CAN_Process(get_tick())` logs errors and performs Bus-Off recovery in main-loop context
-- recovery enters INIT, cancels pending Tx buffers, clears Restricted Operation Mode/error flags, returns to normal mode, and retries after a bounded timeout
 
 `eDRV_CAN_TX_QUEUED` means that the hardware accepted the request. It does not mean that another CAN node has ACKed the frame. A periodic application event should use this pattern:
 
@@ -375,6 +375,12 @@ if (eResult == eDRV_CAN_TX_QUEUED)
     FLAG_SEND_CAN_391 = 0U;
 }
 ```
+
+#### CAN Bus-Off recovery
+
+- Error Warning, Error Passive, Bus-Off, arbitration/data protocol error, and Message RAM access failure interrupts are enabled
+- the ISR only records status; `CAN_Process(get_tick())` logs errors and performs Bus-Off recovery in main-loop context
+- recovery enters INIT, cancels pending Tx buffers, clears Restricted Operation Mode/error flags, returns to normal mode, and retries after a bounded timeout
 
 Bus-Off bench test:
 
