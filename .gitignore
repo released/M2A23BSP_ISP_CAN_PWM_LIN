@@ -1,0 +1,23 @@
+# Local engineering records
+/MANUAL_CLEANUP.md
+/HANDOFF.md
+/CODEX_HANDOFF.md
+/SELF_CHECK.md
+/AGENTS.md
+/docs/internal/
+/.codex/
+/.claude/
+
+# Keil user state and compiler outputs
+**/*.uvguix.*
+**/Nu_Link_Driver.ini
+/SampleCode/Template/AP/Keil/obj/
+/SampleCode/Template/AP/Keil/lst/
+/SampleCode/Template/ISP_CAN/Keil/obj/
+/SampleCode/Template/ISP_CAN/Keil/lst/
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.bak
+*~

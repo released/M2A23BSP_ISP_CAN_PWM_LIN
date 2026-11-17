@@ -430,9 +430,9 @@
               <FilePath>..\drv_adc.c</FilePath>
             </File>
             <File>
-              <FileName>drv_lin_bus.c</FileName>
+              <FileName>drv_lin_slave.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\drv_lin_bus.c</FilePath>
+              <FilePath>..\drv_lin_slave.c</FilePath>
             </File>
             <File>
               <FileName>drv_gpio_io.c</FileName>

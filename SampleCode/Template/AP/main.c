@@ -9,7 +9,7 @@
 #include "drv_can_fd.h"
 #include "drv_pwm.h"
 #include "drv_adc.h"
-#include "drv_lin_bus.h"
+#include "drv_lin_slave.h"
 #include "drv_gpio_io.h"
 
 /*_____ D E C L A R A T I O N S ____________________________________________*/
@@ -18,27 +18,19 @@ volatile struct flag_32bit flag_PROJ_CTL;
 #define FLAG_PROJ_STANDBY_REQUEST                       (flag_PROJ_CTL.bit2)
 #define FLAG_PROJ_SEND_CAN_1                            (flag_PROJ_CTL.bit3)
 #define FLAG_PROJ_SEND_CAN_2                            (flag_PROJ_CTL.bit4)
-#define FLAG_PROJ_SEND_LIN                              (flag_PROJ_CTL.bit5)
 
 /*_____ D E F I N I T I O N S ______________________________________________*/
-#if 0
 #define APP_DEBUG_UART                                  UART1
 #define APP_DEBUG_UART_RST                              UART1_RST
 #define APP_DEBUG_UART_IRQn                             UART1_IRQn
 #define APP_DEBUG_UART_IRQHandler                       UART1_IRQHandler
-#else   //EVB  DEBUG
-#define APP_DEBUG_UART                                  UART0
-#define APP_DEBUG_UART_RST                              UART0_RST
-#define APP_DEBUG_UART_IRQn                             UART0_IRQn
-#define APP_DEBUG_UART_IRQHandler                       UART0_IRQHandler
-#endif
 
 #define APP_DEBUG_UART_BAUD_RATE                        (115200U)
 #define APP_DEBUG_UART_INT_MASK                         (UART_INTEN_RDAIEN_Msk | UART_INTEN_RXTOIEN_Msk)
 
-#define LIN_BUS_UART_BAUD_RATE                          (19200U)
-#define LIN_BUS_TEST_FRAME_ID                           (0x30U)
-#define LIN_BUS_TEST_FRAME_LEN                          (8U)
+#define LIN_SLAVE_UART_BAUD_RATE                        (19200U)
+#define LIN_SLAVE_TEST_FRAME_ID                         (0x30U)
+#define LIN_SLAVE_TEST_FRAME_LEN                        (8U)
 
 volatile unsigned long counter_systick = 0;
 volatile uint32_t counter_tick = 0;
@@ -46,7 +38,6 @@ volatile uint32_t counter_tick = 0;
 static int g_timer_id_task1 = -1;
 static int g_timer_id_task2 = -1;
 static int g_timer_id_task3 = -1;
-static const uint8_t g_au8LinTxData[LIN_BUS_TEST_FRAME_LEN] = {0x11U, 0x22U, 0x33U, 0x44U, 0x55U, 0x66U, 0x77U, 0x88U};
 static uint16_t g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 static uint8_t g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 
@@ -209,10 +200,10 @@ static void WDT_Init(void)
 
 static void APP_ProcessLinRx(void)
 {
-    S_DRV_LIN_BUS_PACKET sLinPacket;
+    S_DRV_LIN_SLAVE_PACKET sLinPacket;
     uint8_t i;
 
-    if (DRV_LIN_BUS_GetAndClearRxPacket(&sLinPacket) == 0U)
+    if (DRV_LIN_SLAVE_GetAndClearRxPacket(&sLinPacket) == 0U)
     {
         return;
     }
@@ -224,9 +215,9 @@ static void APP_ProcessLinRx(void)
     {
         printf("%02X ", sLinPacket.au8Data[i]);
     }
-    printf("CHK=%02X\r\n", sLinPacket.u8Checksum);
-
-    DRV_LIN_BUS_StartRx(LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
+    printf("CHK=%02X %s\r\n",
+           sLinPacket.u8Checksum,
+           (sLinPacket.u8ChecksumValid != 0U) ? "OK" : "ERROR");
 }
 
 static void APP_ProcessADCEvents(void)
@@ -565,7 +556,7 @@ void loop(void)
     GPIO_IN_OUT_proccess();
     APP_ProcessInputMeasureEvents();
     
-    #if (ENABLE_LIN_BUS == 1)
+    #if (ENABLE_LIN_SLAVE == 1)
     APP_ProcessLinRx();
     #endif
 
@@ -627,22 +618,6 @@ void loop(void)
         }
     }
 
-    #if (ENABLE_LIN_BUS == 1)
-    if (FLAG_PROJ_SEND_LIN)
-    {
-        FLAG_PROJ_SEND_LIN = 0;
-        if (DRV_LIN_BUS_SendPacket(LIN_BUS_TEST_FRAME_ID, g_au8LinTxData, LIN_BUS_TEST_FRAME_LEN) == 0)
-        {
-            printf("LIN TX ID=0x%02X LEN=%u sent\r\n", LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
-        }
-        else
-        {
-            printf("LIN TX failed\r\n");
-        }
-
-        DRV_LIN_BUS_StartRx(LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
-    }
-    #endif
 }
 
 void UARTx_Process(void)
@@ -670,11 +645,6 @@ void UARTx_Process(void)
 
             case '9':
                 FLAG_PROJ_SEND_CAN_2 = 1;
-                break;
-
-            case 'T':
-            case 't':
-                FLAG_PROJ_SEND_LIN = 1;
                 break;
 
             case 'E':
@@ -751,8 +721,10 @@ void SYS_Init(void)
                    CLK_AHBCLK_GPIOCCKEN_Msk | CLK_AHBCLK_GPIODCKEN_Msk |
                    CLK_AHBCLK_GPIOFCKEN_Msk;
 
+    #if (ENABLE_LIN_SLAVE == 1)
     CLK_EnableModuleClock(UART0_MODULE);
     CLK_SetModuleClock(UART0_MODULE, CLK_CLKSEL2_UART0SEL_HIRC, CLK_CLKDIV0_UART0(1));
+    #endif
 
     CLK_EnableModuleClock(UART1_MODULE);
     CLK_SetModuleClock(UART1_MODULE, CLK_CLKSEL2_UART1SEL_HIRC, CLK_CLKDIV0_UART1(1));
@@ -777,15 +749,12 @@ void SYS_Init(void)
     CLK_EnableModuleClock(WDT_MODULE);
     CLK_SetModuleClock(WDT_MODULE, CLK_CLKSEL1_WDTSEL_LIRC, 0);
 
-    #if (ENABLE_LIN_BUS == 1)   // LIN BUS & UART DEBUG
+    #if (ENABLE_LIN_SLAVE == 1)
     SET_UART0_RXD_PA6();
     SET_UART0_TXD_PA7();
+    #endif
     SET_UART1_RXD_PB6();
     SET_UART1_TXD_PB7();
-    #else   // EVB UART DEBUG
-    SET_UART0_RXD_PB12();
-    SET_UART0_TXD_PB13();
-    #endif
     SET_ADC0_CH0_PB0();
     SET_ADC0_CH2_PB2();
     SET_PWM0_CH0_PF5();
@@ -809,8 +778,8 @@ int main(void)
 
     DRV_GPIO_IO_Init();
     
-    #if (ENABLE_LIN_BUS == 1)
-    DRV_LIN_BUS_Init(LIN_BUS_UART_BAUD_RATE);
+    #if (ENABLE_LIN_SLAVE == 1)
+    DRV_LIN_SLAVE_Init(LIN_SLAVE_UART_BAUD_RATE);
     #endif
     TIMER1_Init();
     TIMER2_Init();
@@ -826,15 +795,19 @@ int main(void)
     CAN_Init();
     DRV_ADC_Init();
     DRV_PWM_Init();
-    #if (ENABLE_LIN_BUS == 1)
-    DRV_LIN_BUS_StartRx(LIN_BUS_TEST_FRAME_ID, LIN_BUS_TEST_FRAME_LEN);
+    #if (ENABLE_LIN_SLAVE == 1)
+    if (DRV_LIN_SLAVE_StartReceive(LIN_SLAVE_TEST_FRAME_ID,
+                                   LIN_SLAVE_TEST_FRAME_LEN,
+                                   eDRV_LIN_SLAVE_CHECKSUM_CLASSIC) != 0)
+    {
+        printf("LIN slave receive initialization failed\r\n");
+    }
     #endif
 
     printf("UART key map:\r\n");
     printf("7: standby until CAN RX wake-up\r\n");
     printf("8: send CAN message:0x99, 8 bytes\r\n");
     printf("9: send CAN message:0x4444, 32 bytes\r\n");
-    printf("T/t: send one LIN packet\r\n");
     printf("E/e: invalidate APP checksum + reset\r\n");
 
     TimerService_Init();
