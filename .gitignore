@@ -4,6 +4,7 @@
 /CODEX_HANDOFF.md
 /SELF_CHECK.md
 /AGENTS.md
+/github_push.bat
 /docs/internal/
 /.codex/
 /.claude/
@@ -17,6 +18,10 @@
 /SampleCode/Template/ISP_CAN/Keil/lst/
 
 # Local logs and temporary files
+*.trc
+/capture_PLIN.jpg
+/config_PLIN.jpg
+/log_PLIN.jpg
 *.log
 *.tmp
 *.bak

@@ -7,8 +7,22 @@
 
 /*_____ D E F I N I T I O N S ______________________________________________*/
 #define DRV_PWM_GROUP_NUM                               (3U)
-#define DRV_PWM_DUTY_MAX                                (100U)
-#define DRV_PWM_DUTY_RESOLUTION                         (100U)
+/* Full-scale duty is 100%. Select one resolution for both PWM and BPWM:
+ * 10000U: 8230U = 82.30%, 4750U = 47.50%, 8233U = 82.33%.
+ *  1000U:  823U = 82.3%,   475U = 47.5%.
+ *   100U:   82U = 82%,      47U = 47%.
+ */
+#ifndef DRV_PWM_DUTY_RESOLUTION
+#define DRV_PWM_DUTY_RESOLUTION                         (10000U)
+#endif
+
+#if ((DRV_PWM_DUTY_RESOLUTION != 100U) && \
+     (DRV_PWM_DUTY_RESOLUTION != 1000U) && \
+     (DRV_PWM_DUTY_RESOLUTION != 10000U))
+#error "DRV_PWM_DUTY_RESOLUTION must be 100U, 1000U or 10000U"
+#endif
+
+#define DRV_PWM_DUTY_MAX                                (DRV_PWM_DUTY_RESOLUTION)
 
 #define DRV_PWM_GROUP1_CHANNEL                          (0U)
 #define DRV_PWM_GROUP2_CHANNEL                          (2U)
@@ -31,8 +45,11 @@ typedef enum
 /*_____ F U N C T I O N S __________________________________________________*/
 /* PA3 is switched to BPWM0_CH3 when DRV_GPIO_LED_SET4_GPIO_ENABLE is 0U. */
 void DRV_PWM_Init(void);
-void DRV_PWM_SetOutputDutyCycle(E_DRV_PWM_GROUP eGroup, uint8_t u8Duty);
-/* 0% duty forces PA3 output to logic low. */
-void DRV_BPWM_SetOutputDutyCycle(uint8_t u8Duty);
+/* Duty units follow DRV_PWM_DUTY_RESOLUTION; values above full scale are clamped.
+ * 0U forces the selected output to logic low.
+ */
+void DRV_PWM_SetOutputDutyCycle(E_DRV_PWM_GROUP eGroup, uint16_t u16Duty);
+/* Same duty units; 0U forces PA3 output to logic low. */
+void DRV_BPWM_SetOutputDutyCycle(uint16_t u16Duty);
 
 #endif /* __DRV_PWM_H__ */

@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$DryRun,
+    [switch]$Yes,
+    [string]$TaskScopeFile = '',
     [string]$Message = 'Update M2A23 firmware project'
 )
 
@@ -11,6 +13,7 @@ $ExpectedRemote = 'https://github.com/released/M2A23BSP_ISP_CAN_PWM_LIN.git'
 $ExpectedBranch = 'main'
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $KnownLocalTrackedFiles = @(
+    'github_push.bat',
     'SampleCode/Template/AP/Keil/Template.uvguix.AveryC',
     'SampleCode/Template/ISP_CAN/Keil/Template.uvguix.AveryC',
     'SampleCode/Template/AP/Keil/Nu_Link_Driver.ini',
@@ -151,10 +154,10 @@ function Test-ForbiddenPath
     $leaf = [IO.Path]::GetFileName($normalized)
 
     if ($normalized -match '(^|/)(\.git|\.vs|\.codex|\.claude|obj|lst|Debug|Release|captures|recordings|sessions|logs|private|tmp|artifacts)(/|$)') { return $true }
-    if ($normalized -match '^(docs/internal/|MANUAL_CLEANUP\.md$|HANDOFF\.md$|CODEX_HANDOFF\.md$|SELF_CHECK\.md$|AGENTS\.md$)') { return $true }
+    if ($normalized -match '^(docs/internal/|MANUAL_CLEANUP\.md$|HANDOFF\.md$|CODEX_HANDOFF\.md$|SELF_CHECK\.md$|AGENTS\.md$|github_push\.bat$)') { return $true }
     if ($leaf -match '(?i)\.uvguix\.' -or $leaf -match '(?i)\.(user|suo|ncb)$') { return $true }
     if ($normalized -match '(?i)(^|/)(auth\.json|credentials[^/]*|secrets?\.[^/]+|\.env(?:\.[^/]+)?|github_push\.local\.psd1)$') { return $true }
-    if ($normalized -match '(?i)\.(obj|o|axf|elf|bin|hex|map|lnp|dep|d|log|dmp|tmp|bak|exe|dll|zip|7z|ini)$') { return $true }
+    if ($normalized -match '(?i)\.(obj|o|axf|elf|bin|hex|map|lnp|dep|d|log|trc|dmp|tmp|bak|exe|dll|zip|7z|ini)$') { return $true }
 
     return $false
 }
@@ -178,7 +181,7 @@ function Assert-SafePath
 
 function Assert-PublicContent
 {
-    param([Parameter(Mandatory = $true)][string[]]$Paths)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Paths)
 
     $textExtensions = @('.bat', '.c', '.cmd', '.h', '.json', '.md', '.ps1', '.s', '.txt', '.uvoptx', '.uvprojx', '.xml', '.yml', '.yaml')
     $credentialPatterns = @(
@@ -224,10 +227,77 @@ function Assert-PublicContent
     }
 }
 
+function Get-ScopedPendingPaths
+{
+    param([string[]]$AllPendingPaths)
+
+    if ([string]::IsNullOrWhiteSpace($TaskScopeFile))
+    {
+        return @($AllPendingPaths | Where-Object { $KnownLocalTrackedFiles -notcontains $_ })
+    }
+
+    Assert-SafePath -Path $TaskScopeFile
+    $scopePath = Join-Path $ProjectRoot $TaskScopeFile
+    $trackedScope = Invoke-GitCommand -GitArgs @('ls-files', '--error-unmatch', '--', $TaskScopeFile) -AllowedExitCodes @(0, 1)
+    $ignoredScope = Invoke-GitCommand -GitArgs @('check-ignore', '--quiet', '--', $TaskScopeFile) -AllowedExitCodes @(0, 1)
+    if (($trackedScope.ExitCode -eq 0) -or ($ignoredScope.ExitCode -ne 0))
+    {
+        throw 'Task scope must be an ignored, untracked project-local file.'
+    }
+    $scope = [IO.File]::ReadAllText($scopePath) | ConvertFrom-Json
+    $head = (Invoke-GitCommand -GitArgs @('rev-parse', 'HEAD')).Text.Trim()
+    if (($scope.schema -ne 1) -or ($scope.base_head -cne $head))
+    {
+        throw 'Task scope schema/base_head does not match the current repository.'
+    }
+    $entries = @($scope.files)
+    if (($entries.Count -lt 1) -or ($entries.Count -gt 256))
+    {
+        throw 'Task scope must contain 1..256 explicit files.'
+    }
+    $selected = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $entries)
+    {
+        $path = $entry.path
+        if (($path -isnot [string]) -or [string]::IsNullOrWhiteSpace($path) -or
+            ($path -match '[:\\*?\[\]]') -or (-not $selected.Add($path)))
+        {
+            throw 'Task scope contains a duplicate, wildcard, or invalid literal path.'
+        }
+        Assert-SafePath -Path $path
+        if (($KnownLocalTrackedFiles -contains $path) -or (Test-ForbiddenPath -Path $path))
+        {
+            throw "Task scope selects a local-only or generated file: $path"
+        }
+        if ($AllPendingPaths -cnotcontains $path)
+        {
+            throw "Task scope selects a file without pending changes: $path"
+        }
+        $fullPath = Join-Path $ProjectRoot $path
+        $actualHash = 'deleted'
+        if (Test-Path -LiteralPath $fullPath -PathType Leaf)
+        {
+            $actualHash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        if (($entry.sha256 -isnot [string]) -or
+            (($entry.sha256 -cne 'deleted') -and ($entry.sha256 -cnotmatch '^[0-9a-f]{64}$')) -or
+            ($entry.sha256 -cne $actualHash))
+        {
+            throw "Task scope content changed or hash is invalid: $path"
+        }
+    }
+    return @($selected | Sort-Object)
+}
+
 function Get-TrackedLocalCleanup
 {
     $tracked = @((Invoke-GitCommand -GitArgs @('-c', 'core.quotepath=false', 'ls-files')).Lines)
     $cleanup = @($KnownLocalTrackedFiles | Where-Object { $tracked -contains $_ })
+    if ($cleanup -contains 'github_push.bat')
+    {
+        $ignoredBatch = Invoke-GitCommand -GitArgs @('check-ignore', '--no-index', '--quiet', '--', 'github_push.bat') -AllowedExitCodes @(0, 1)
+        if ($ignoredBatch.ExitCode -ne 0) { throw 'github_push.bat must be ignored before removing its tracked copy.' }
+    }
     $unexpected = @($tracked | Where-Object {
         (Test-ForbiddenPath -Path $_) -and
         ($KnownLocalTrackedFiles -notcontains $_) -and
@@ -244,7 +314,7 @@ function Get-TrackedLocalCleanup
 
 function Get-PathFingerprint
 {
-    param([Parameter(Mandatory = $true)][string[]]$Paths)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Paths)
 
     $manifest = New-Object 'Collections.Generic.List[string]'
     foreach ($path in @($Paths | Sort-Object -Unique))
@@ -270,11 +340,45 @@ function Get-PathFingerprint
     }
 }
 
+function Get-GitBlobSnapshot
+{
+    param([AllowEmptyCollection()][string[]]$Paths)
+
+    $snapshot = @{}
+    foreach ($path in $Paths)
+    {
+        $snapshot[$path] = 'deleted'
+        if (Test-Path -LiteralPath (Join-Path $ProjectRoot $path) -PathType Leaf)
+        {
+            $snapshot[$path] = (Invoke-GitCommand -GitArgs @('hash-object', "--path=$path", '--', $path)).Text.Trim()
+        }
+    }
+    return $snapshot
+}
+
+function Assert-StagedBlobSnapshot
+{
+    param([hashtable]$Snapshot)
+
+    foreach ($path in $Snapshot.Keys)
+    {
+        $actual = Invoke-GitCommand -GitArgs @('rev-parse', '--verify', ":$path") -AllowedExitCodes @(0, 128)
+        if ($Snapshot[$path] -ceq 'deleted')
+        {
+            if ($actual.ExitCode -eq 0) { throw "Staged deletion is missing: $path" }
+        }
+        elseif (($actual.ExitCode -ne 0) -or ($actual.Text.Trim() -cne $Snapshot[$path]))
+        {
+            throw "Staged content differs from the reviewed snapshot: $path"
+        }
+    }
+}
+
 function Show-PublicationReview
 {
     param(
-        [Parameter(Mandatory = $true)][string[]]$PendingPaths,
-        [Parameter(Mandatory = $true)][string[]]$CleanupPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$PendingPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$CleanupPaths,
         [Parameter(Mandatory = $true)][string]$RemoteSha
     )
 
@@ -311,11 +415,15 @@ try
     {
         throw 'Commit message must be one non-empty line.'
     }
+    if ($Yes -and [string]::IsNullOrWhiteSpace($TaskScopeFile))
+    {
+        throw 'Noninteractive publication requires an explicit task scope file.'
+    }
 
     Set-Location -LiteralPath $ProjectRoot
     Assert-RepositoryState
     $remoteSha = Assert-RemoteAncestry
-    $pendingPaths = @(Get-PendingPaths)
+    $pendingPaths = @(Get-ScopedPendingPaths -AllPendingPaths @(Get-PendingPaths))
     $cleanupPaths = @(Get-TrackedLocalCleanup)
     Assert-PublicContent -Paths $pendingPaths
     [void](Invoke-GitCommand -GitArgs @('diff', '--check', 'HEAD', '--'))
@@ -335,7 +443,7 @@ try
         exit 0
     }
 
-    if ((Read-Host 'Type PUSH to commit and push this reviewed scope; anything else cancels') -cne 'PUSH')
+    if (-not $Yes -and (Read-Host 'Type PUSH to commit and push this reviewed scope; anything else cancels') -cne 'PUSH')
     {
         Write-Output 'CANCELED: no index, commit, or remote change was made.'
         exit 0
@@ -343,11 +451,14 @@ try
 
     Assert-RepositoryState
     if ((Assert-RemoteAncestry) -cne $remoteSha) { throw 'Live remote changed during confirmation.' }
-    $pendingNow = @(Get-PendingPaths)
+    $pendingNow = @(Get-ScopedPendingPaths -AllPendingPaths @(Get-PendingPaths))
     $cleanupNow = @(Get-TrackedLocalCleanup)
     if (@(Compare-Object -ReferenceObject $pendingPaths -DifferenceObject $pendingNow).Count -ne 0) { throw 'Pending paths changed during confirmation.' }
     if (@(Compare-Object -ReferenceObject $cleanupPaths -DifferenceObject $cleanupNow).Count -ne 0) { throw 'Tracked cleanup paths changed during confirmation.' }
     if ((Get-PathFingerprint -Paths (@($pendingNow) + @($cleanupNow))) -cne $fingerprint) { throw 'Publication candidate content changed during confirmation.' }
+    $blobSnapshot = Get-GitBlobSnapshot -Paths $pendingPaths
+    foreach ($path in $cleanupPaths) { $blobSnapshot[$path] = 'deleted' }
+    if ((Get-PathFingerprint -Paths (@($pendingNow) + @($cleanupNow))) -cne $fingerprint) { throw 'Content changed while computing the reviewed Git blobs.' }
 
     foreach ($path in $cleanupPaths)
     {
@@ -355,7 +466,7 @@ try
     }
     foreach ($path in $pendingPaths)
     {
-        [void](Invoke-GitCommand -GitArgs @('add', '--', $path))
+        [void](Invoke-GitCommand -GitArgs @('--literal-pathspecs', 'add', '--', $path))
     }
 
     $expectedStaged = @(@($pendingPaths) + @($cleanupPaths) | Sort-Object -Unique)
@@ -364,6 +475,8 @@ try
     {
         throw 'The staged path set does not match the reviewed publication scope.'
     }
+    Assert-StagedBlobSnapshot -Snapshot $blobSnapshot
+    if ((Get-PathFingerprint -Paths (@($pendingNow) + @($cleanupNow))) -cne $fingerprint) { throw 'Worktree content changed during staging; the index was preserved for inspection.' }
 
     [void](Invoke-GitCommand -GitArgs @('diff', '--cached', '--check'))
     $stagedStat = Invoke-GitCommand -GitArgs @('--no-pager', 'diff', '--cached', '--stat')

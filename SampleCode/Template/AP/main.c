@@ -29,8 +29,16 @@ volatile struct flag_32bit flag_PROJ_CTL;
 #define APP_DEBUG_UART_INT_MASK                         (UART_INTEN_RDAIEN_Msk | UART_INTEN_RXTOIEN_Msk)
 
 #define LIN_SLAVE_UART_BAUD_RATE                        (19200U)
-#define LIN_SLAVE_TEST_FRAME_ID                         (0x30U)
-#define LIN_SLAVE_TEST_FRAME_LEN                        (8U)
+#define LIN_SLAVE_PID_RESPONSE_2E                       (0x2EU)
+#define LIN_SLAVE_PID_RECEIVE_C1                        (0xC1U)
+#define LIN_SLAVE_PID_RESPONSE_D8                       (0xD8U)
+#define LIN_SLAVE_PID_RECEIVE_50                        (0x50U)
+#define LIN_SLAVE_PID_RESPONSE_E2                       (0xE2U)
+#define LIN_SLAVE_PID_RESPONSE_A3                       (0xA3U)
+#define LIN_SLAVE_PID_RECEIVE_42                        (0x42U)
+#define LIN_SLAVE_PID_RECEIVE_03                        (0x03U)
+/* 1U: D8/E2 byte 0 advances every second; 0U: retain initial test payloads. */
+#define LIN_SLAVE_DYNAMIC_TX_EXAMPLE                    (1U)
 
 volatile unsigned long counter_systick = 0;
 volatile uint32_t counter_tick = 0;
@@ -40,6 +48,14 @@ static int g_timer_id_task2 = -1;
 static int g_timer_id_task3 = -1;
 static uint16_t g_au16InputMeasureFreqHz[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
 static uint8_t g_au8InputMeasureDuty[eDRV_GPIO_INPUT_MEASURE_MAX] = {0U, 0U};
+
+static uint8_t g_u8LinResponseSequence = 0U;
+static uint8_t g_u8LinReady = 0U;
+/* Independent application buffers; only valid received packets update them. */
+static uint8_t g_au8LinRxC1[8];
+static uint8_t g_au8LinRx50[8];
+static uint8_t g_au8LinRx42[2];
+static uint8_t g_au8LinRx03[4];
 
 #define ENABLE_ADC_LOG                                  (0U)
 #define ENABLE_INPUT_MEASURE_LOG                        (0U)
@@ -198,26 +214,237 @@ static void WDT_Init(void)
     SYS_LockReg();
 }
 
+static int32_t APP_UpdateLinResponse(void)
+{
+    uint8_t au8Response2E[1];
+    uint8_t au8ResponseD8[8];
+    uint8_t au8ResponseE2[2];
+    uint8_t au8ResponseA3[4];
+    int32_t i32Result;
+
+    /* Compose current application data here, outside the UART ISR. */
+    au8Response2E[0] = 0x00U;
+    i32Result = DRV_LIN_SLAVE_SetResponseData(LIN_SLAVE_PID_RESPONSE_2E, au8Response2E, 1U);
+    if ((i32Result != DRV_LIN_SLAVE_OK) && (i32Result != DRV_LIN_SLAVE_NOT_FOUND))
+    {
+        return i32Result;
+    }
+
+    au8ResponseD8[0] = (uint8_t)(0x10U + g_u8LinResponseSequence);
+    au8ResponseD8[1] = 0x20U;
+    au8ResponseD8[2] = 0x30U;
+    au8ResponseD8[3] = 0x40U;
+    au8ResponseD8[4] = 0x50U;
+    au8ResponseD8[5] = 0x60U;
+    au8ResponseD8[6] = 0x70U;
+    au8ResponseD8[7] = 0x80U;
+    i32Result = DRV_LIN_SLAVE_SetResponseData(LIN_SLAVE_PID_RESPONSE_D8, au8ResponseD8, 8U);
+    if ((i32Result != DRV_LIN_SLAVE_OK) && (i32Result != DRV_LIN_SLAVE_NOT_FOUND))
+    {
+        return i32Result;
+    }
+
+    au8ResponseE2[0] = g_u8LinResponseSequence;
+    au8ResponseE2[1] = 0xA5U;
+    i32Result = DRV_LIN_SLAVE_SetResponseData(LIN_SLAVE_PID_RESPONSE_E2, au8ResponseE2, 2U);
+    if ((i32Result != DRV_LIN_SLAVE_OK) && (i32Result != DRV_LIN_SLAVE_NOT_FOUND))
+    {
+        return i32Result;
+    }
+
+    au8ResponseA3[0] = 0xDEU;
+    au8ResponseA3[1] = 0xADU;
+    au8ResponseA3[2] = 0xBEU;
+    au8ResponseA3[3] = 0xEFU;
+    i32Result = DRV_LIN_SLAVE_SetResponseData(LIN_SLAVE_PID_RESPONSE_A3, au8ResponseA3, 4U);
+
+    /* Removing a registration disables it without requiring an updater edit. */
+    return (i32Result == DRV_LIN_SLAVE_NOT_FOUND) ? DRV_LIN_SLAVE_OK : i32Result;
+}
+
+static int32_t APP_InitLinFrames(void)
+{
+    int32_t i32Result;
+
+    /* Register each PID independently; no application frame count is needed. */
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RESPONSE_2E,
+                                           eDRV_LIN_SLAVE_DIRECTION_RESPONSE,
+                                           1U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RECEIVE_C1,
+                                           eDRV_LIN_SLAVE_DIRECTION_RECEIVE,
+                                           8U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RESPONSE_D8,
+                                           eDRV_LIN_SLAVE_DIRECTION_RESPONSE,
+                                           8U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    /* Standard ID 0x10 uses PID 0x50, not parity-invalid PID 0xD0. */
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RECEIVE_50,
+                                           eDRV_LIN_SLAVE_DIRECTION_RECEIVE,
+                                           8U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RESPONSE_E2,
+                                           eDRV_LIN_SLAVE_DIRECTION_RESPONSE,
+                                           2U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RESPONSE_A3,
+                                           eDRV_LIN_SLAVE_DIRECTION_RESPONSE,
+                                           4U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RECEIVE_42,
+                                           eDRV_LIN_SLAVE_DIRECTION_RECEIVE,
+                                           2U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_RegisterFrame(LIN_SLAVE_PID_RECEIVE_03,
+                                           eDRV_LIN_SLAVE_DIRECTION_RECEIVE,
+                                           4U, DRV_LIN_SLAVE_DEFAULT_CHECKSUM_MODE);
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+
+    i32Result = APP_UpdateLinResponse();
+    if (i32Result != DRV_LIN_SLAVE_OK)
+    {
+        return i32Result;
+    }
+    i32Result = DRV_LIN_SLAVE_Start();
+    g_u8LinReady = (i32Result == DRV_LIN_SLAVE_OK) ? 1U : 0U;
+    return i32Result;
+}
+
+static void APP_PrintLinRxPacket(const S_DRV_LIN_SLAVE_PACKET *psPacket)
+{
+    uint8_t i;
+
+    printf("LIN RX PID=0x%02X ID=0x%02X LEN=%u DATA=",
+           psPacket->u8Pid,
+           psPacket->u8Id,
+           psPacket->u8DataLen);
+    for (i = 0U; i < psPacket->u8DataLen; i++)
+    {
+        printf("%02X ", psPacket->au8Data[i]);
+    }
+    printf("CHK=%02X %s\r\n",
+           psPacket->u8Checksum,
+           (psPacket->u8ChecksumValid != 0U) ? "OK" : "ERROR");
+}
+
 static void APP_ProcessLinRx(void)
 {
     S_DRV_LIN_SLAVE_PACKET sLinPacket;
+    uint32_t u32ErrorFlags;
+    uint8_t u8LastPid;
+
+    u32ErrorFlags = DRV_LIN_SLAVE_GetAndClearErrorFlags(&u8LastPid);
+    if ((u32ErrorFlags & DRV_LIN_SLAVE_ERROR_PID_PARITY) != 0U)
+    {
+        printf("LIN PID parity error: 0x%02X\r\n", u8LastPid);
+    }
+    if ((u32ErrorFlags & DRV_LIN_SLAVE_ERROR_HEADER) != 0U)
+    {
+        printf("LIN header error\r\n");
+    }
+    if ((u32ErrorFlags & DRV_LIN_SLAVE_ERROR_TX) != 0U)
+    {
+        printf("LIN response TX error\r\n");
+    }
+    if ((u32ErrorFlags & DRV_LIN_SLAVE_ERROR_RX_OVERFLOW) != 0U)
+    {
+        printf("LIN RX event overflow\r\n");
+    }
+    if ((u32ErrorFlags & DRV_LIN_SLAVE_ERROR_TX_EVENT_OVERFLOW) != 0U)
+    {
+        printf("LIN TX log overflow\r\n");
+    }
+
+    if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(LIN_SLAVE_PID_RECEIVE_C1, &sLinPacket) != 0U)
+    {
+        APP_PrintLinRxPacket(&sLinPacket);
+        if ((sLinPacket.u8ChecksumValid != 0U) && (sLinPacket.u8DataLen == sizeof(g_au8LinRxC1)))
+        {
+            memcpy(g_au8LinRxC1, sLinPacket.au8Data, sizeof(g_au8LinRxC1));
+            /* Handle PID C1 application data in g_au8LinRxC1 here. */
+        }
+    }
+
+    if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(LIN_SLAVE_PID_RECEIVE_50, &sLinPacket) != 0U)
+    {
+        APP_PrintLinRxPacket(&sLinPacket);
+        if ((sLinPacket.u8ChecksumValid != 0U) && (sLinPacket.u8DataLen == sizeof(g_au8LinRx50)))
+        {
+            memcpy(g_au8LinRx50, sLinPacket.au8Data, sizeof(g_au8LinRx50));
+            /* Handle PID 50 application data in g_au8LinRx50 here. */
+        }
+    }
+
+    if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(LIN_SLAVE_PID_RECEIVE_42, &sLinPacket) != 0U)
+    {
+        APP_PrintLinRxPacket(&sLinPacket);
+        if ((sLinPacket.u8ChecksumValid != 0U) && (sLinPacket.u8DataLen == sizeof(g_au8LinRx42)))
+        {
+            memcpy(g_au8LinRx42, sLinPacket.au8Data, sizeof(g_au8LinRx42));
+            /* Handle the two PID 42 bytes in g_au8LinRx42 here. */
+        }
+    }
+
+    if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(LIN_SLAVE_PID_RECEIVE_03, &sLinPacket) != 0U)
+    {
+        APP_PrintLinRxPacket(&sLinPacket);
+        if ((sLinPacket.u8ChecksumValid != 0U) && (sLinPacket.u8DataLen == sizeof(g_au8LinRx03)))
+        {
+            memcpy(g_au8LinRx03, sLinPacket.au8Data, sizeof(g_au8LinRx03));
+            /* Handle the four PID 03 bytes in g_au8LinRx03 here. */
+        }
+    }
+}
+
+static void APP_ProcessLinTx(void)
+{
+    S_DRV_LIN_SLAVE_PACKET sLinPacket;
+    uint8_t u8Event;
     uint8_t i;
 
-    if (DRV_LIN_SLAVE_GetAndClearRxPacket(&sLinPacket) == 0U)
+    /* Bound foreground logging work even when the master keeps polling. */
+    for (u8Event = 0U; u8Event < DRV_LIN_SLAVE_TX_EVENT_COUNT; u8Event++)
     {
-        return;
+        if (DRV_LIN_SLAVE_GetAndClearTxPacket(&sLinPacket) == 0U)
+        {
+            break;
+        }
+        printf("LIN TX PID=0x%02X ID=0x%02X LEN=%u DATA=",
+               sLinPacket.u8Pid,
+               sLinPacket.u8Id,
+               sLinPacket.u8DataLen);
+        for (i = 0U; i < sLinPacket.u8DataLen; i++)
+        {
+            printf("%02X ", sLinPacket.au8Data[i]);
+        }
+        printf("CHK=%02X DONE\r\n", sLinPacket.u8Checksum);
     }
-
-    printf("LIN RX ID=0x%02X LEN=%u DATA=",
-           sLinPacket.u8Id,
-           sLinPacket.u8DataLen);
-    for (i = 0U; i < sLinPacket.u8DataLen; i++)
-    {
-        printf("%02X ", sLinPacket.au8Data[i]);
-    }
-    printf("CHK=%02X %s\r\n",
-           sLinPacket.u8Checksum,
-           (sLinPacket.u8ChecksumValid != 0U) ? "OK" : "ERROR");
 }
 
 static void APP_ProcessADCEvents(void)
@@ -254,7 +481,19 @@ void Task_1000ms_Callback(void *user_data)
 {
     UNUSED(user_data);
 
+    PA0 = (PA0 == 0U) ? 1U : 0U;
     APP_ProcessADCEvents();
+
+    #if ((ENABLE_LIN_SLAVE == 1) && (LIN_SLAVE_DYNAMIC_TX_EXAMPLE == 1))
+    if (g_u8LinReady != 0U)
+    {
+        g_u8LinResponseSequence++;
+        if (APP_UpdateLinResponse() != DRV_LIN_SLAVE_OK)
+        {
+            printf("LIN payload update failed\r\n");
+        }
+    }
+    #endif
 
     #if (ENABLE_INPUT_MEASURE_LOG == 1)
     printf("INPUT_MEASURE");
@@ -558,6 +797,7 @@ void loop(void)
     
     #if (ENABLE_LIN_SLAVE == 1)
     APP_ProcessLinRx();
+    APP_ProcessLinTx();
     #endif
 
     //  CAN RX
@@ -796,11 +1036,16 @@ int main(void)
     DRV_ADC_Init();
     DRV_PWM_Init();
     #if (ENABLE_LIN_SLAVE == 1)
-    if (DRV_LIN_SLAVE_StartReceive(LIN_SLAVE_TEST_FRAME_ID,
-                                   LIN_SLAVE_TEST_FRAME_LEN,
-                                   eDRV_LIN_SLAVE_CHECKSUM_CLASSIC) != 0)
+    if (APP_InitLinFrames() != DRV_LIN_SLAVE_OK)
     {
-        printf("LIN slave receive initialization failed\r\n");
+        printf("LIN slave registration/start failed\r\n");
+    }
+    else
+    {
+        printf("LIN slave: 19200 bps, Enhanced checksum default\r\n");
+        printf("LIN dynamic D8/E2 payload example: %u\r\n", (unsigned int)LIN_SLAVE_DYNAMIC_TX_EXAMPLE);
+        printf("LIN header: HW Break -> SW Sync(55) -> PID, EN(PB14)=%lu\r\n", (unsigned long)PB14);
+        printf("LIN registry ready, capacity=%u\r\n", (unsigned int)DRV_LIN_SLAVE_MAX_FRAME_COUNT);
     }
     #endif
 
