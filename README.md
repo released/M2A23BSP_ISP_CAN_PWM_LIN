@@ -16,7 +16,7 @@ M2A23 BSP 範例，涵蓋：
 ## 專案概覽
 
 - MCU／系列：`M2A23`。
-- 板端接腳：依 `HSC ARM CAN Rev1_0 20260601` 產品 PCB 配置。
+- 板端接腳：依本專案的接腳表與初始化程式配置。
 - 開發工具：`Keil uVision5`。
 - 開機流程：透過 CAN ISP 實作 `LDROM -> APROM`。
 - 映像完整性：使用 `SRecord` 處理 `APROM` checksum。
@@ -28,7 +28,7 @@ M2A23 BSP 範例，涵蓋：
 
 ## 硬體配置
 
-產品接腳依據 `HSC ARM CAN Rev1_0 20260601`。NuMaker-M2A23SG 電路圖僅作為開發板參考；產品韌體不使用該開發板的 `PD15` LIN sleep 控制與 VCOM UART 配線。
+本範例的接腳以接腳表與初始化程式為準。NuMaker-M2A23SG 電路圖僅作為開發板參考；本配置不使用該開發板的 `PD15` LIN sleep 控制與 VCOM UART 配線。
 
 - Bootloader debug UART：`UART1`，`PB6=RXD1`、`PB7=TXD1`。
 - 應用程式 debug UART：`UART1`，`PB6=RXD1`、`PB7=TXD1`。
@@ -462,18 +462,18 @@ LIN drivers：
 
 兩個 driver 分別擁有 UART0，不能同時編入同一個 target。目前 AP 只包含 `drv_lin_slave.c`；`drv_lin_master.c` 保留供獨立的 master 專案使用。
 
-車載節點角色：
+節點角色：
 
-- 車體 ECU 為 LIN master，負責排程。
-- M2A23 車燈模組為 LIN slave。
-- 所有 header（`break + sync + PID`）皆由 ECU 發出。
-- ECU 為 publisher 時，M2A23 作為 subscriber 接收 response data。
-- M2A23 為 publisher 時，等待 ECU header 後，只回覆 data 與 checksum。
-- 車燈模組不在車載匯流排上自行產生 master header。
+- LIN master 負責排程。
+- M2A23 為 LIN slave。
+- 所有 header（`break + sync + PID`）皆由 master 發出。
+- Master 為 publisher 時，M2A23 作為 subscriber 接收 response data。
+- M2A23 為 publisher 時，等待 master header 後，只回覆 data 與 checksum。
+- M2A23 slave 不自行產生 master header。
 
 PLIN 測試角色：
 
-- **PLIN adapter＝LIN Master**，代替車體 ECU。
+- **PLIN adapter＝LIN Master**，負責發起測試交易。
 - **M2A23＝LIN Slave**，每組測試都不變，包含 MCU 發送資料的情況。
 - Master／Slave 決定誰發起 header；Publisher／Subscriber 決定誰發送／接收該 frame 的 response（`Data + Checksum`）。**Publisher 不等於 Master，Subscriber 也不等於 Slave。**
 - PLIN-View Pro 的 **Direction 代表 PLIN adapter 的 response-data 角色**，不是 M2A23 的角色。PLIN 在 Master 模式下，Subscriber 仍會發出 header，再等 M2A23 資料；Publisher 則發出 header 與 response。
@@ -523,7 +523,7 @@ Slave driver API 與行為：
 - 軟體在查找 PID 前先驗證 parity。
 - 停用完整 header decoder 與 MUTE PID filter，讓軟體從 RX FIFO 取得 Sync、PID。
 - 回覆資料只填入當下可用的 FIFO 空間；TX-empty 中斷補上剩餘 byte，TX-end 完成 frame。
-- Slave 不發送 break、sync 或 PID；這些 header 欄位均由 ECU master 提供。
+- Slave 不發送 break、sync 或 PID；這些 header 欄位均由 LIN master 提供。
 - TX response buffer 與 RX frame buffer 互相獨立。
 - 新註冊的 publisher 在第一次成功更新 payload 前保持靜默。
 - 前景更新使用一致的 payload 快照，不改變正在傳送的 response。
@@ -596,7 +596,7 @@ DRV_LIN_SLAVE_SetResponseData(0xD8U, au8ResponseD8, 8U);
 - Driver 會複製資料，呼叫返回後可重用區域 buffer。
 - 只改區域 buffer 不會更新 driver，需再次呼叫 API。
 - Payload 長度必須符合註冊；不符合時保留原 payload。
-- 更新不會立即送出 frame；仍由 ECU／PLIN master 發起 header，driver 依當筆 response 快照計算 checksum。
+- 更新不會立即送出 frame；仍由 LIN master（例如 PLIN）發起 header，driver 依當筆 response 快照計算 checksum。
 - `APP_UpdateLinResponse()` 為應用程式組包範例；`Task_1000ms_Callback()` 透過前景 `TimerService_Dispatch()` 執行，遞增 D8／E2 共用範例序號後更新。UART ISR 不執行應用程式 callback。
 - `LIN_SLAVE_DYNAMIC_TX_EXAMPLE = 1U` 時，D8 byte 0 每秒由 `10`、`11`、`12` 依序遞增，以 8-bit 值循環；其餘保持 `20 30 40 50 60 70 80`，`2E` 持續回覆 `00`。
 - E2 byte 0 從 `00` 開始每秒遞增，byte 1 固定 `A5`；A3 固定 `DE AD BE EF`。四組 TX payload 獨立組包，不回送或依賴 RX 資料。
@@ -638,7 +638,7 @@ if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(0x42U, &sLinPacket) != 0U)
 - 取出的資料會複製到呼叫端儲存空間。移除註冊會丟棄該 PID 尚未取走的封包；初始化會清除所有 mailbox。
 - 相容 getter `GetAndClearRxPacket()` 按註冊順序取第一個 ready mailbox，不是匯流排時間順序。兩個 getter 消耗相同 mailbox，不會產生兩份事件。
 
-正式產品的 LIN matrix／LDF 需定義命令與回饋 PID、長度、publisher、checksum、排程及 timeout。目前應用程式不連結 master 發送路徑。
+系統的 LIN matrix／LDF 需定義命令與回饋 PID、長度、publisher、checksum、排程及 timeout。目前應用程式不連結 master 發送路徑。
 
 <a id="tx-completion-log"></a>
 
@@ -668,6 +668,10 @@ LIN TX PID=0xE2 ID=0x22 LEN=2 DATA=00 A5 CHK=77 DONE
 - Baud rate：`19200 bit/s`。
 - 8 組 Trigger 均設為 `Manual`。
 - ID 填入 PLIN 的 6-bit ID；Protected ID 自動產生，不以 PID 取代 ID。Length 只計 data，不含 checksum。
+
+連線設定範例：Mode 選擇 `Master`，Bit rate 選擇 `19200`。
+
+![PLIN-View Pro 連線設定：Master、19200 bit/s](config_PLIN.jpg)
 
 **Direction 設定以 PLIN（Master）為準，不直接複製 M2A23（Slave）的角色。** M2A23 動作欄為對照說明，不是 PLIN 欄位。
 
@@ -703,6 +707,22 @@ ID `2Eh` 按 Space 後，由 PLIN master 發送 header，M2A23 回覆資料 `00`
 | `23h` | `DE AD BE EF` | `21` |
 
 預設動態巨集為 `1U`：ID `18h`、`22h` 的 byte 0 每秒更新，checksum 隨之變更；ID `2Eh`、`23h` 維持固定。表內 Publisher 測試資料的 Enhanced checksum 分別為 `1A`（01h）、`49`（10h）、`BD`（02h）、`52`（03h）。
+
+PLIN 收發畫面範例：
+
+![PLIN-View Pro：8 組 LIN frame 的 Receive 與 Transmit 清單](capture_PLIN.jpg)
+
+- 上方 Receive 清單顯示匯流排觀察資料；下方 Transmit 清單顯示發起交易的設定。
+- 圖中的 `TX`／`RX` Comment 均以 M2A23 端為準，PLIN 設定仍以 Direction 欄為準。
+- ID `18h`、`22h` 啟用動態更新，畫面中的資料／checksum 依測試時點變動，不需等於固定回覆表的初始值。
+
+對應的 MCU UART log 範例：
+
+![M2A23 UART：8 組 LIN 測試的 TX DONE 與 RX checksum OK](log_PLIN.jpg)
+
+- `LIN TX ... DONE`：M2A23 回覆資料後，本地 UART 完成傳送。
+- `LIN RX ... OK`：M2A23 收到資料，且 checksum 檢查正確。
+- TX log 的資料快照可與 PLIN Receive 清單核對；動態值需對照同一筆交易。
 
 測試 Classic checksum 時，選定 frame 的註冊與 PLIN checksum 類型需一起改為 Classic。ID `0x2E`、單 byte 資料 `00` 的 Classic checksum 為 `FF`，Enhanced 則為 `D1`。
 

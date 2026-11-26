@@ -16,7 +16,7 @@ M2A23 BSP example for:
 - MCU / Series:
   `M2A23`
 - Board:
-  Product PCB pin assignment from `HSC ARM CAN Rev1_0 20260601`
+  Pin assignments defined by this project's pin map and initialization code
 - Toolchain:
   `Keil uVision5`
 - Boot flow: `LDROM -> APROM` with CAN ISP.
@@ -27,7 +27,7 @@ M2A23 BSP example for:
 
 ## Hardware
 
-The product pin assignment follows `HSC ARM CAN Rev1_0 20260601`. The NuMaker-M2A23SG schematic is only a development-board reference; its `PD15` LIN sleep control and VCOM UART routing are not used by the product firmware.
+Pin assignments follow this project's pin map and initialization code. The NuMaker-M2A23SG schematic is only a development-board reference; this configuration does not use its `PD15` LIN sleep control or VCOM UART routing.
 
 - Bootloader debug UART:
   `UART1`, `PB6=RXD1`, `PB7=TXD1`
@@ -507,16 +507,16 @@ The drivers are separate UART0 owners and must not be compiled into the same tar
 
 Node roles:
 
-- the vehicle ECU is the LIN master and owns the schedule
-- the M2A23 lamp module is a LIN slave
-- the ECU sends every header (`break + sync + PID`)
-- for an ECU-published frame, the M2A23 is the subscriber and receives the response data
-- for an M2A23-published feedback frame, the M2A23 waits for the ECU header and then returns only data and checksum
-- the lamp module must not generate a master header on the vehicle network
+- the LIN master owns the schedule
+- the M2A23 is a LIN slave
+- the master sends every header (`break + sync + PID`)
+- for a master-published frame, the M2A23 is the subscriber and receives the response data
+- for an M2A23-published frame, the M2A23 waits for the master header and then returns only data and checksum
+- the M2A23 slave does not generate master headers
 
 Bench-test roles:
 
-- **PLIN adapter = LIN Master**, acting in place of the vehicle ECU.
+- **PLIN adapter = LIN Master**, initiating the test transactions.
 - **M2A23 = LIN Slave** in every test case, whether receiving or transmitting data.
 - Master/Slave determines who initiates the header. Publisher/Subscriber determines
   who sends/receives that frame's response (`Data + Checksum`). These are separate
@@ -578,7 +578,7 @@ Slave driver APIs:
 - software PID validation rejects bad parity before lookup
 - the complete-header decoder and MUTE PID filter are disabled so software receives Sync and PID from the RX FIFO
 - response bytes are queued without waiting for FIFO space; TX-empty interrupts queue any remaining byte and TX-end completes the frame
-- the slave never sends break, sync or PID; those header fields always come from the ECU master
+- the slave never sends break, sync or PID; those header fields always come from the LIN master
 - TX response buffers are independent from received frame buffers
 - a newly registered publisher remains silent until its first successful payload update
 - foreground updates preserve a coherent payload snapshot: a response already in progress is unchanged
@@ -660,7 +660,7 @@ DRV_LIN_SLAVE_SetResponseData(0xD8U, au8ResponseD8, 8U);
 - The driver copies the data, so a local buffer can be reused after the call.
 - Changing that local buffer alone does not update the driver; call the API again.
 - Payload length must match the registration; mismatches leave the old payload unchanged.
-- Updates do not send a frame immediately. The ECU/PLIN master still initiates
+- Updates do not send a frame immediately. The LIN master (such as PLIN) still initiates
   every header, and the driver calculates checksum from that response snapshot.
 - `APP_UpdateLinResponse()` is the application packet-composition example.
   `Task_1000ms_Callback()` runs via foreground `TimerService_Dispatch()` and calls
@@ -723,7 +723,7 @@ if (DRV_LIN_SLAVE_GetAndClearRxPacketByPid(0x42U, &sLinPacket) != 0U)
   registration order, not chronological bus order. Both getters consume the same
   mailbox; using both does not produce two copies of one event.
 
-The production LIN matrix/LDF must define the command and feedback PIDs, frame
+The system LIN matrix/LDF must define the command and feedback PIDs, frame
 lengths, publishers, checksum models, schedule and timeout requirements. No
 master transmit path is linked into the current application.
 
@@ -758,6 +758,10 @@ Common adapter settings:
 - Trigger: `Manual` for all eight entries
 - ID is the 6-bit PLIN ID; Protected ID is generated automatically, not entered
   instead of ID. Length includes data only, not checksum.
+
+Connection settings example: select `Master` for Mode and `19200` for Bit rate.
+
+![PLIN-View Pro connection settings: Master, 19200 bit/s](config_PLIN.jpg)
 
 PLIN transmit-entry settings. **Direction is configured for PLIN (Master), not
 copied from the M2A23 (Slave) role.** The M2A23 action column is explanatory, not
@@ -807,6 +811,26 @@ The default dynamic macro is `1U`: ID `18h` and `22h` byte 0 changes every secon
 and their checksums change accordingly. ID `2Eh` and `23h` remain fixed. For the
 Publisher test data above, expected Enhanced checksums are `1A` (01h), `49`
 (10h), `BD` (02h) and `52` (03h).
+
+PLIN receive/transmit example:
+
+![PLIN-View Pro Receive and Transmit lists for the eight LIN frames](capture_PLIN.jpg)
+
+- The upper Receive list shows observed bus data; the lower Transmit list shows
+  the settings used to initiate transactions.
+- The `TX`/`RX` comments in this image refer to M2A23. PLIN settings still follow
+  the Direction column.
+- ID `18h` and `22h` use dynamic updates. Their displayed data/checksums depend
+  on the test instant and need not match the initial fixed-response vectors.
+
+Corresponding MCU UART log example:
+
+![M2A23 UART TX DONE and RX checksum OK logs for the eight LIN cases](log_PLIN.jpg)
+
+- `LIN TX ... DONE`: M2A23 supplied the response and local UART transmission ended.
+- `LIN RX ... OK`: M2A23 received the data and its checksum check passed.
+- TX log snapshots can be compared with the PLIN Receive list; dynamic values
+  must be matched to the same transaction.
 
 To verify Classic checksum, change both the selected frame registration and the
 PLIN frame checksum type to Classic. For ID `0x2E` with one data byte `00`, the

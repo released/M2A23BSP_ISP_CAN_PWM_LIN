@@ -19,9 +19,6 @@
 
 # Local logs and temporary files
 *.trc
-/capture_PLIN.jpg
-/config_PLIN.jpg
-/log_PLIN.jpg
 *.log
 *.tmp
 *.bak
